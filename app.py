@@ -1,11 +1,13 @@
-
 import streamlit as st
 import joblib
 import numpy as np
 import pandas as pd
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from rdkit import Chem
 from rdkit.Chem import Descriptors, Draw
 from rdkit.ML.Descriptors import MoleculeDescriptors
+from datetime import datetime
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -17,6 +19,94 @@ st.set_page_config(
     page_icon="🎯",
     layout="wide"
 )
+
+# ============================================
+# DATABASE CONNECTION
+# ============================================
+def get_db_connection():
+    try:
+        conn = psycopg2.connect(
+            host=st.secrets["database"]["host"],
+            port=st.secrets["database"]["port"],
+            database=st.secrets["database"]["database"],
+            user=st.secrets["database"]["user"],
+            password=st.secrets["database"]["password"]
+        )
+        return conn
+    except Exception as e:
+        st.error(f"Database connection failed: {e}")
+        return None
+
+# ============================================
+# DATABASE FUNCTIONS
+# ============================================
+def save_compound(conn, smiles, compound_name, molecular_weight, original_target):
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            INSERT INTO compounds (smiles, compound_name, molecular_weight, original_target)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (smiles) DO UPDATE SET compound_name = EXCLUDED.compound_name
+            RETURNING compound_id
+        """, (smiles, compound_name, molecular_weight, original_target))
+        conn.commit()
+        return cursor.fetchone()[0]
+    except Exception as e:
+        conn.rollback()
+        return None
+    finally:
+        cursor.close()
+
+def save_prediction(conn, compound_id, hsp90_tau, axl_tau, egfr_tau, best_target, category, confidence):
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            INSERT INTO predictions (compound_id, hsp90_tau_seconds, axl_tau_seconds, egfr_tau_seconds, best_target, category, confidence)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING prediction_id
+        """, (compound_id, hsp90_tau, axl_tau, egfr_tau, best_target, category, confidence))
+        conn.commit()
+        return cursor.fetchone()[0]
+    except Exception as e:
+        conn.rollback()
+        return None
+    finally:
+        cursor.close()
+
+def get_prediction_history(conn, limit=50):
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cursor.execute("""
+            SELECT c.compound_name, c.smiles, p.hsp90_tau_seconds, p.axl_tau_seconds, 
+                   p.egfr_tau_seconds, p.best_target, p.category, p.confidence, p.predicted_at
+            FROM predictions p
+            JOIN compounds c ON p.compound_id = c.compound_id
+            ORDER BY p.predicted_at DESC
+            LIMIT %s
+        """, (limit,))
+        return cursor.fetchall()
+    except Exception as e:
+        return []
+    finally:
+        cursor.close()
+
+def get_stats(conn):
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cursor.execute("""
+            SELECT 
+                COUNT(DISTINCT compound_id) as total_compounds,
+                COUNT(*) as total_predictions,
+                SUM(CASE WHEN category = 'Long' THEN 1 ELSE 0 END) as long_count,
+                SUM(CASE WHEN category = 'Medium' THEN 1 ELSE 0 END) as medium_count,
+                SUM(CASE WHEN category = 'Short' THEN 1 ELSE 0 END) as short_count
+            FROM predictions
+        """)
+        return cursor.fetchone()
+    except Exception as e:
+        return None
+    finally:
+        cursor.close()
 
 # ============================================
 # LOAD MODELS
@@ -102,6 +192,15 @@ def get_best_target(results):
     best = max(results.items(), key=lambda x: x[1]['rt'])
     return best[0], best[1]['r2']
 
+def get_molecular_weight(smiles):
+    try:
+        mol = Chem.MolFromSmiles(smiles)
+        if mol:
+            return Descriptors.MolWt(mol)
+        return None
+    except:
+        return None
+
 # ============================================
 # MAIN APP
 # ============================================
@@ -115,8 +214,22 @@ def main():
     models = load_models()
     desc_names = load_descriptors()
     
-    # Two tabs
-    tab1, tab2 = st.tabs(["📁 Batch Upload (CSV)", "✏️ Single Compound"])
+    # Database connection
+    conn = get_db_connection()
+    
+    # Show stats if connected
+    if conn:
+        stats = get_stats(conn)
+        if stats and stats['total_predictions'] > 0:
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Total Compounds", stats['total_compounds'])
+            col2.metric("Total Predictions", stats['total_predictions'])
+            col3.metric("Long Residence", stats['long_count'])
+            col4.metric("Short Residence", stats['short_count'])
+            st.markdown("---")
+    
+    # Three tabs
+    tab1, tab2, tab3 = st.tabs(["📁 Batch Upload", "✏️ Single Compound", "📜 History"])
     
     # ============================================
     # TAB 1: BATCH UPLOAD
@@ -137,7 +250,7 @@ def main():
         })
         
         st.download_button(
-            "📥 Download Template CSV",
+            "Download Template CSV",
             template_df.to_csv(index=False),
             "kineticscout_template.csv",
             "text/csv"
@@ -156,23 +269,40 @@ def main():
                     break
             
             if smiles_col is None:
-                st.error("❌ No SMILES column found!")
+                st.error("No SMILES column found!")
             else:
-                st.success(f"✅ Loaded {len(df)} compounds")
+                st.success(f"Loaded {len(df)} compounds")
                 
-                if st.button("🚀 Predict All Targets", type="primary", use_container_width=True):
+                # Save to database option
+                save_to_db = st.checkbox("Save predictions to database", value=True)
+                
+                if st.button("Predict All Targets", type="primary", use_container_width=True):
                     results_list = []
                     progress = st.progress(0)
                     
                     for idx, row in df.iterrows():
                         smiles = row[smiles_col]
                         compound_id = row.get('Compound_ID', row.get('compound_id', f'Cpd_{idx+1}'))
+                        original_target = row.get('Original_Target', row.get('original_target', ''))
                         
                         preds = predict_all_targets(smiles, models, desc_names)
                         
                         if preds:
                             best_target, best_conf = get_best_target(preds)
                             best_rt = preds[best_target]['rt']
+                            category = get_category(best_rt)
+                            confidence = int(best_conf * 100)
+                            
+                            # Save to database if connected and checkbox is checked
+                            if conn and save_to_db:
+                                mw = get_molecular_weight(smiles)
+                                db_compound_id = save_compound(conn, smiles, str(compound_id), mw, str(original_target))
+                                if db_compound_id:
+                                    save_prediction(conn, db_compound_id, 
+                                                   preds['HSP90']['rt'], 
+                                                   preds['AXL']['rt'], 
+                                                   preds['EGFR']['rt'], 
+                                                   best_target, category, confidence)
                             
                             results_list.append({
                                 'Compound': compound_id,
@@ -180,8 +310,8 @@ def main():
                                 'AXL τ': format_time(preds['AXL']['rt']),
                                 'EGFR τ': format_time(preds['EGFR']['rt']),
                                 'Best Target': best_target,
-                                'Category': get_category(best_rt),
-                                'Confidence': f"{int(best_conf * 100)}%"
+                                'Category': category,
+                                'Confidence': f"{confidence}%"
                             })
                         else:
                             results_list.append({
@@ -198,26 +328,28 @@ def main():
                     
                     # Results
                     st.markdown("---")
-                    st.markdown("### 📊 Results")
+                    st.markdown("### Results")
                     
                     results_df = pd.DataFrame(results_list)
                     
                     # Summary
-                    st.markdown("#### Summary")
                     col1, col2, col3, col4 = st.columns(4)
                     col1.metric("Total", len(results_df))
-                    col2.metric("Long τ", len(results_df[results_df['Category'] == 'Long']))
-                    col3.metric("Medium τ", len(results_df[results_df['Category'] == 'Medium']))
-                    col4.metric("Short τ", len(results_df[results_df['Category'] == 'Short']))
+                    col2.metric("Long", len(results_df[results_df['Category'] == 'Long']))
+                    col3.metric("Medium", len(results_df[results_df['Category'] == 'Medium']))
+                    col4.metric("Short", len(results_df[results_df['Category'] == 'Short']))
                     
                     st.markdown("---")
                     
                     # Display table
                     st.dataframe(results_df, use_container_width=True, hide_index=True)
                     
+                    if save_to_db and conn:
+                        st.success("Predictions saved to database!")
+                    
                     # Download
                     st.download_button(
-                        "📥 Download Results",
+                        "Download Results",
                         results_df.to_csv(index=False),
                         "kineticscout_results.csv",
                         "text/csv",
@@ -231,9 +363,13 @@ def main():
         st.markdown("#### Enter a SMILES string")
         
         smiles_input = st.text_input("SMILES", placeholder="e.g., Cc1ccc(NC(=O)c2ccc(CN3CCN(C)CC3)cc2)cc1Nc1nccc(-c2cccnc2)n1")
+        compound_name = st.text_input("Compound Name (optional)", placeholder="e.g., Imatinib")
+        
+        # Save to database option
+        save_single = st.checkbox("Save to database", value=True, key="save_single")
         
         # Examples
-        with st.expander("📝 Example Compounds"):
+        with st.expander("Example Compounds"):
             col1, col2 = st.columns(2)
             with col1:
                 st.markdown("**Imatinib:**")
@@ -242,14 +378,14 @@ def main():
                 st.markdown("**Gefitinib:**")
                 st.code("COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN1CCOCC1", language=None)
         
-        if st.button("🔮 Predict", type="primary"):
+        if st.button("Predict", type="primary"):
             if not smiles_input:
                 st.error("Please enter a SMILES")
             else:
                 preds = predict_all_targets(smiles_input, models, desc_names)
                 
                 if preds is None:
-                    st.error("❌ Invalid SMILES")
+                    st.error("Invalid SMILES")
                 else:
                     st.markdown("---")
                     
@@ -265,25 +401,80 @@ def main():
                         
                         best, best_conf = get_best_target(preds)
                         best_rt = preds[best]['rt']
+                        category = get_category(best_rt)
+                        confidence = int(best_conf * 100)
                         
                         for target in ['HSP90', 'AXL', 'EGFR']:
                             rt = preds[target]['rt']
                             conf = int(preds[target]['r2'] * 100)
                             
                             if target == best:
-                                st.success(f"**{target}**: {format_time(rt)} | Confidence: {conf}% ⬆️ Best")
+                                st.success(f"**{target}**: {format_time(rt)} | Confidence: {conf}% - Best")
                             else:
                                 st.info(f"**{target}**: {format_time(rt)} | Confidence: {conf}%")
                         
                         st.markdown("---")
-                        st.markdown(f"**Category:** {get_category(best_rt)}")
+                        st.markdown(f"**Category:** {category}")
+                        
+                        # Save to database
+                        if conn and save_single:
+                            mw = get_molecular_weight(smiles_input)
+                            name = compound_name if compound_name else f"Compound_{datetime.now().strftime('%H%M%S')}"
+                            db_compound_id = save_compound(conn, smiles_input, name, mw, "")
+                            if db_compound_id:
+                                save_prediction(conn, db_compound_id, 
+                                               preds['HSP90']['rt'], 
+                                               preds['AXL']['rt'], 
+                                               preds['EGFR']['rt'], 
+                                               best, category, confidence)
+                                st.success("Saved to database!")
+    
+    # ============================================
+    # TAB 3: HISTORY
+    # ============================================
+    with tab3:
+        st.markdown("#### Prediction History")
+        
+        if conn:
+            history = get_prediction_history(conn)
+            
+            if history:
+                history_df = pd.DataFrame(history)
+                
+                # Format columns
+                history_df['HSP90 τ'] = history_df['hsp90_tau_seconds'].apply(format_time)
+                history_df['AXL τ'] = history_df['axl_tau_seconds'].apply(format_time)
+                history_df['EGFR τ'] = history_df['egfr_tau_seconds'].apply(format_time)
+                history_df['Predicted'] = pd.to_datetime(history_df['predicted_at']).dt.strftime('%Y-%m-%d %H:%M')
+                
+                # Display
+                display_df = history_df[['compound_name', 'HSP90 τ', 'AXL τ', 'EGFR τ', 'best_target', 'category', 'confidence', 'Predicted']]
+                display_df.columns = ['Compound', 'HSP90 τ', 'AXL τ', 'EGFR τ', 'Best Target', 'Category', 'Confidence', 'Predicted']
+                
+                st.dataframe(display_df, use_container_width=True, hide_index=True)
+                
+                # Download history
+                st.download_button(
+                    "Download History",
+                    display_df.to_csv(index=False),
+                    "kineticscout_history.csv",
+                    "text/csv"
+                )
+            else:
+                st.info("No predictions yet. Upload compounds to get started!")
+        else:
+            st.warning("Database not connected. History unavailable.")
     
     # Footer
     st.markdown("---")
     st.markdown(
-        "<p style='text-align: center; color: gray;'>KineticScout v1.0 | NovoDyn Therapeutics</p>",
+        "<p style='text-align: center; color: gray;'>KineticScout v2.0 | NovoDyn Therapeutics</p>",
         unsafe_allow_html=True
     )
+    
+    # Close database connection
+    if conn:
+        conn.close()
 
 if __name__ == "__main__":
     main()
