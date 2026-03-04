@@ -205,7 +205,7 @@ def get_molecular_weight(smiles):
     try:
         mol = Chem.MolFromSmiles(smiles)
         if mol:
-            return Descriptors.MolWt(mol)
+            return float(Descriptors.MolWt(mol))
         return None
     except:
         return None
@@ -313,9 +313,9 @@ def main():
                                 db_compound_id = save_compound(conn, smiles, str(compound_id), mw, str(original_target))
                                 if db_compound_id:
                                     save_prediction(conn, db_compound_id, 
-                                                   preds['HSP90']['rt'], 
-                                                   preds['AXL']['rt'], 
-                                                   preds['EGFR']['rt'], 
+                                                   float(preds['HSP90']['rt']), 
+                                                   float(preds['AXL']['rt']), 
+                                                   float(preds['EGFR']['rt']), 
                                                    best_target, category, confidence)
                             
                             results_list.append({
@@ -436,9 +436,9 @@ def main():
                             db_compound_id = save_compound(conn, smiles_input, name, mw, "")
                             if db_compound_id:
                                 pred_result = save_prediction(conn, db_compound_id, 
-                                               preds['HSP90']['rt'], 
-                                               preds['AXL']['rt'], 
-                                               preds['EGFR']['rt'], 
+                                               float(preds['HSP90']['rt']), 
+                                               float(preds['AXL']['rt']), 
+                                               float(preds['EGFR']['rt']), 
                                                best, category, confidence)
                                 if pred_result:
                                     st.success("Saved to database!")
