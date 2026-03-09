@@ -286,17 +286,20 @@ def get_campaign(conn, campaign_id):
         cursor.close()
 
 def get_campaign_compounds(conn, campaign_id):
+    """Get compounds in a campaign with their LATEST prediction only"""
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     try:
         cursor.execute("""
-            SELECT c.*, cc.pipeline_stage, cc.priority, cc.notes, cc.added_at,
+            SELECT DISTINCT ON (cc.compound_id)
+                   c.compound_id, c.smiles, c.compound_name, c.molecular_weight, c.original_target,
+                   cc.pipeline_stage, cc.priority, cc.notes, cc.added_at,
                    p.hsp90_tau_seconds, p.axl_tau_seconds, p.egfr_tau_seconds,
                    p.best_target, p.category, p.confidence, p.predicted_at
             FROM campaign_compounds cc
             JOIN compounds c ON cc.compound_id = c.compound_id
             LEFT JOIN predictions p ON c.compound_id = p.compound_id AND p.campaign_id = cc.campaign_id
             WHERE cc.campaign_id = %s
-            ORDER BY cc.added_at DESC
+            ORDER BY cc.compound_id, p.predicted_at DESC
         """, (campaign_id,))
         return cursor.fetchall()
     except Exception as e:
@@ -474,17 +477,20 @@ def get_stage_color(stage):
 def time_ago(dt):
     if dt is None:
         return "Unknown"
-    now = datetime.now(dt.tzinfo) if dt.tzinfo else datetime.now()
-    diff = now - dt
-    
-    if diff.days > 0:
-        return f"{diff.days} days ago"
-    elif diff.seconds >= 3600:
-        return f"{diff.seconds // 3600} hours ago"
-    elif diff.seconds >= 60:
-        return f"{diff.seconds // 60} minutes ago"
-    else:
-        return "Just now"
+    try:
+        now = datetime.now(dt.tzinfo) if dt.tzinfo else datetime.now()
+        diff = now - dt
+        
+        if diff.days > 0:
+            return f"{diff.days} days ago"
+        elif diff.seconds >= 3600:
+            return f"{diff.seconds // 3600} hours ago"
+        elif diff.seconds >= 60:
+            return f"{diff.seconds // 60} minutes ago"
+        else:
+            return "Just now"
+    except:
+        return "Unknown"
 
 # ============================================
 # MAIN APP
@@ -770,10 +776,10 @@ def show_dashboard(conn):
     col1, col2, col3, col4 = st.columns(4)
     
     if stats:
-        col1.metric("Active Campaigns", stats['active_campaigns'])
-        col2.metric("Total Compounds", stats['total_compounds'])
-        col3.metric("Total Predictions", stats['total_predictions'])
-        col4.metric("Total Campaigns", stats['total_campaigns'])
+        col1.metric("Active Campaigns", stats['active_campaigns'] or 0)
+        col2.metric("Total Compounds", stats['total_compounds'] or 0)
+        col3.metric("Total Predictions", stats['total_predictions'] or 0)
+        col4.metric("Total Campaigns", stats['total_campaigns'] or 0)
     
     st.markdown("---")
     
@@ -793,14 +799,14 @@ def show_dashboard(conn):
     with col2:
         st.markdown("### Category Breakdown")
         if stats:
-            total = (stats['long_count'] or 0) + (stats['medium_count'] or 0) + (stats['short_count'] or 0)
+            long_count = stats['long_count'] or 0
+            med_count = stats['medium_count'] or 0
+            short_count = stats['short_count'] or 0
+            total = long_count + med_count + short_count
             if total > 0:
-                long_pct = 100 * (stats['long_count'] or 0) // total
-                med_pct = 100 * (stats['medium_count'] or 0) // total
-                short_pct = 100 * (stats['short_count'] or 0) // total
-                st.markdown(f"🟢 **Long** (>1 hr): {stats['long_count'] or 0} ({long_pct}%)")
-                st.markdown(f"🟡 **Medium** (1 to 60 min): {stats['medium_count'] or 0} ({med_pct}%)")
-                st.markdown(f"🔴 **Short** (<1 min): {stats['short_count'] or 0} ({short_pct}%)")
+                st.markdown(f"🟢 **Long** (>1 hr): {long_count} ({100 * long_count // total}%)")
+                st.markdown(f"🟡 **Medium** (1 to 60 min): {med_count} ({100 * med_count // total}%)")
+                st.markdown(f"🔴 **Short** (<1 min): {short_count} ({100 * short_count // total}%)")
             else:
                 st.info("No predictions yet")
     
@@ -823,7 +829,7 @@ def show_dashboard(conn):
         if campaign_summary:
             for camp in campaign_summary:
                 status_color = "🟢" if camp['status'] == 'Active' else "🟡" if camp['status'] == 'Paused' else "⚫"
-                st.markdown(f"{status_color} **{camp['campaign_name']}**: {camp['compound_count']} compounds, {camp['advanced_count'] or 0} advanced")
+                st.markdown(f"{status_color} **{camp['campaign_name']}**: {camp['compound_count'] or 0} compounds, {camp['advanced_count'] or 0} advanced")
         else:
             st.info("No campaigns yet")
     
@@ -1030,7 +1036,7 @@ def show_table_view(conn, campaign_id):
         
         st.markdown("---")
         
-        for compound in compounds:
+        for idx, compound in enumerate(compounds):
             with st.container():
                 col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 2])
                 
@@ -1053,7 +1059,7 @@ def show_table_view(conn, campaign_id):
                         "Stage",
                         PIPELINE_STAGES,
                         index=PIPELINE_STAGES.index(current_stage),
-                        key=f"stage_{compound['compound_id']}",
+                        key=f"stage_{campaign_id}_{compound['compound_id']}_{idx}",
                         label_visibility="collapsed"
                     )
                     if new_stage != current_stage:
@@ -1062,9 +1068,9 @@ def show_table_view(conn, campaign_id):
                 
                 with st.expander(f"Notes for {compound['compound_name']}", expanded=False):
                     current_notes = compound['notes'] if compound['notes'] else ""
-                    new_notes = st.text_area("Notes", value=current_notes, key=f"notes_{compound['compound_id']}")
+                    new_notes = st.text_area("Notes", value=current_notes, key=f"notes_{campaign_id}_{compound['compound_id']}_{idx}")
                     if new_notes != current_notes:
-                        if st.button("Save Notes", key=f"save_notes_{compound['compound_id']}"):
+                        if st.button("Save Notes", key=f"save_notes_{campaign_id}_{compound['compound_id']}_{idx}"):
                             if update_compound_notes(conn, campaign_id, compound['compound_id'], new_notes):
                                 st.success("Notes saved!")
                                 st.rerun()
@@ -1120,7 +1126,7 @@ def show_pipeline_view(conn, campaign_id):
             st.markdown(f"*({len(stage_compounds[stage])} compounds)*")
             st.markdown("---")
             
-            for compound in stage_compounds[stage]:
+            for idx, compound in enumerate(stage_compounds[stage]):
                 with st.container():
                     name = compound['compound_name']
                     if len(name) > 15:
@@ -1135,14 +1141,14 @@ def show_pipeline_view(conn, campaign_id):
                     
                     if i > 0:
                         with button_cols[0]:
-                            if st.button("<", key=f"left_{compound['compound_id']}_{stage}"):
+                            if st.button("<", key=f"left_{campaign_id}_{compound['compound_id']}_{stage}_{idx}"):
                                 new_stage = PIPELINE_STAGES[i - 1]
                                 if update_compound_stage(conn, campaign_id, compound['compound_id'], new_stage):
                                     st.rerun()
                     
                     if i < len(PIPELINE_STAGES) - 1:
                         with button_cols[1]:
-                            if st.button(">", key=f"right_{compound['compound_id']}_{stage}"):
+                            if st.button(">", key=f"right_{campaign_id}_{compound['compound_id']}_{stage}_{idx}"):
                                 new_stage = PIPELINE_STAGES[i + 1]
                                 if update_compound_stage(conn, campaign_id, compound['compound_id'], new_stage):
                                     st.rerun()
