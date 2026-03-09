@@ -50,6 +50,103 @@ def get_db_connection():
         return None
 
 # ============================================
+# DATABASE FUNCTIONS - DASHBOARD
+# ============================================
+def get_dashboard_stats(conn):
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cursor.execute("""
+            SELECT 
+                (SELECT COUNT(*) FROM campaigns) as total_campaigns,
+                (SELECT COUNT(*) FROM campaigns WHERE status = 'Active') as active_campaigns,
+                (SELECT COUNT(*) FROM compounds) as total_compounds,
+                (SELECT COUNT(*) FROM predictions) as total_predictions,
+                (SELECT COUNT(*) FROM predictions WHERE category = 'Long') as long_count,
+                (SELECT COUNT(*) FROM predictions WHERE category = 'Medium') as medium_count,
+                (SELECT COUNT(*) FROM predictions WHERE category = 'Short') as short_count
+        """)
+        return cursor.fetchone()
+    except Exception as e:
+        return None
+    finally:
+        cursor.close()
+
+def get_pipeline_stats(conn):
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cursor.execute("""
+            SELECT pipeline_stage, COUNT(*) as count
+            FROM campaign_compounds
+            GROUP BY pipeline_stage
+            ORDER BY 
+                CASE pipeline_stage
+                    WHEN 'Predicted' THEN 1
+                    WHEN 'To Synthesize' THEN 2
+                    WHEN 'In Synthesis' THEN 3
+                    WHEN 'Testing' THEN 4
+                    WHEN 'Advanced' THEN 5
+                    WHEN 'Deprioritized' THEN 6
+                END
+        """)
+        return cursor.fetchall()
+    except Exception as e:
+        return []
+    finally:
+        cursor.close()
+
+def get_recent_predictions(conn, limit=10):
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cursor.execute("""
+            SELECT c.compound_name, p.best_target, p.category, p.predicted_at,
+                   cam.campaign_name
+            FROM predictions p
+            JOIN compounds c ON p.compound_id = c.compound_id
+            LEFT JOIN campaigns cam ON p.campaign_id = cam.campaign_id
+            ORDER BY p.predicted_at DESC
+            LIMIT %s
+        """, (limit,))
+        return cursor.fetchall()
+    except Exception as e:
+        return []
+    finally:
+        cursor.close()
+
+def get_target_distribution(conn):
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cursor.execute("""
+            SELECT best_target, COUNT(*) as count
+            FROM predictions
+            WHERE best_target IS NOT NULL
+            GROUP BY best_target
+            ORDER BY count DESC
+        """)
+        return cursor.fetchall()
+    except Exception as e:
+        return []
+    finally:
+        cursor.close()
+
+def get_campaign_summary(conn):
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cursor.execute("""
+            SELECT c.campaign_name, c.target_protein, c.status,
+                   COUNT(DISTINCT cc.compound_id) as compound_count,
+                   SUM(CASE WHEN cc.pipeline_stage = 'Advanced' THEN 1 ELSE 0 END) as advanced_count
+            FROM campaigns c
+            LEFT JOIN campaign_compounds cc ON c.campaign_id = cc.campaign_id
+            GROUP BY c.campaign_id, c.campaign_name, c.target_protein, c.status
+            ORDER BY c.created_at DESC
+        """)
+        return cursor.fetchall()
+    except Exception as e:
+        return []
+    finally:
+        cursor.close()
+
+# ============================================
 # DATABASE FUNCTIONS - COMPOUNDS & PREDICTIONS
 # ============================================
 def save_compound(conn, smiles, compound_name, molecular_weight, original_target):
@@ -207,25 +304,6 @@ def get_campaign_compounds(conn, campaign_id):
     finally:
         cursor.close()
 
-def get_compounds_by_stage(conn, campaign_id, stage):
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
-    try:
-        cursor.execute("""
-            SELECT c.*, cc.pipeline_stage, cc.priority, cc.notes, cc.added_at,
-                   p.hsp90_tau_seconds, p.axl_tau_seconds, p.egfr_tau_seconds,
-                   p.best_target, p.category, p.confidence, p.predicted_at
-            FROM campaign_compounds cc
-            JOIN compounds c ON cc.compound_id = c.compound_id
-            LEFT JOIN predictions p ON c.compound_id = p.compound_id AND p.campaign_id = cc.campaign_id
-            WHERE cc.campaign_id = %s AND cc.pipeline_stage = %s
-            ORDER BY cc.added_at DESC
-        """, (campaign_id, stage))
-        return cursor.fetchall()
-    except Exception as e:
-        return []
-    finally:
-        cursor.close()
-
 def delete_campaign(conn, campaign_id):
     cursor = conn.cursor()
     try:
@@ -284,40 +362,6 @@ def update_compound_notes(conn, campaign_id, compound_id, notes):
     except Exception as e:
         conn.rollback()
         return False
-    finally:
-        cursor.close()
-
-def update_compound_priority(conn, campaign_id, compound_id, priority):
-    cursor = conn.cursor()
-    try:
-        cursor.execute("""
-            UPDATE campaign_compounds 
-            SET priority = %s
-            WHERE campaign_id = %s AND compound_id = %s
-        """, (priority, campaign_id, compound_id))
-        conn.commit()
-        return True
-    except Exception as e:
-        conn.rollback()
-        return False
-    finally:
-        cursor.close()
-
-def get_compound_detail(conn, compound_id, campaign_id):
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
-    try:
-        cursor.execute("""
-            SELECT c.*, cc.pipeline_stage, cc.priority, cc.notes, cc.added_at,
-                   p.hsp90_tau_seconds, p.axl_tau_seconds, p.egfr_tau_seconds,
-                   p.best_target, p.category, p.confidence, p.predicted_at
-            FROM compounds c
-            LEFT JOIN campaign_compounds cc ON c.compound_id = cc.compound_id AND cc.campaign_id = %s
-            LEFT JOIN predictions p ON c.compound_id = p.compound_id AND p.campaign_id = %s
-            WHERE c.compound_id = %s
-        """, (campaign_id, campaign_id, compound_id))
-        return cursor.fetchone()
-    except Exception as e:
-        return None
     finally:
         cursor.close()
 
@@ -427,13 +471,20 @@ def get_stage_color(stage):
     }
     return colors.get(stage, '⚪')
 
-def get_priority_color(priority):
-    colors = {
-        'High': '🔴',
-        'Medium': '🟡',
-        'Low': '🟢'
-    }
-    return colors.get(priority, '⚪')
+def time_ago(dt):
+    if dt is None:
+        return "Unknown"
+    now = datetime.now(dt.tzinfo) if dt.tzinfo else datetime.now()
+    diff = now - dt
+    
+    if diff.days > 0:
+        return f"{diff.days} days ago"
+    elif diff.seconds >= 3600:
+        return f"{diff.seconds // 3600} hours ago"
+    elif diff.seconds >= 60:
+        return f"{diff.seconds // 60} minutes ago"
+    else:
+        return "Just now"
 
 # ============================================
 # MAIN APP
@@ -451,33 +502,28 @@ def main():
     # Database connection
     conn = get_db_connection()
     
-    # Show stats if connected
-    if conn:
-        stats = get_stats(conn)
-        if stats and stats['total_predictions'] and stats['total_predictions'] > 0:
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Total Compounds", stats['total_compounds'])
-            col2.metric("Total Predictions", stats['total_predictions'])
-            col3.metric("Long Residence", stats['long_count'])
-            col4.metric("Short Residence", stats['short_count'])
-            st.markdown("---")
-    
-    # Four tabs
-    tab1, tab2, tab3, tab4 = st.tabs(["📁 Campaigns", "🔬 Quick Predict", "📊 Batch Upload", "📜 History"])
+    # Five tabs
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Dashboard", "📁 Campaigns", "🔬 Quick Predict", "📊 Batch Upload", "📜 History"])
     
     # ============================================
-    # TAB 1: CAMPAIGNS
+    # TAB 1: DASHBOARD
     # ============================================
     with tab1:
+        show_dashboard(conn)
+    
+    # ============================================
+    # TAB 2: CAMPAIGNS
+    # ============================================
+    with tab2:
         if st.session_state.current_campaign is None:
             show_campaign_list(conn, models, desc_names)
         else:
             show_campaign_detail(conn, models, desc_names)
     
     # ============================================
-    # TAB 2: QUICK PREDICT
+    # TAB 3: QUICK PREDICT
     # ============================================
-    with tab2:
+    with tab3:
         st.markdown("#### Enter a SMILES string")
         
         smiles_input = st.text_input("SMILES", placeholder="e.g., Cc1ccc(NC(=O)c2ccc(CN3CCN(C)CC3)cc2)cc1Nc1nccc(-c2cccnc2)n1")
@@ -545,9 +591,9 @@ def main():
                                     st.success("✅ Saved to database!")
     
     # ============================================
-    # TAB 3: BATCH UPLOAD
+    # TAB 4: BATCH UPLOAD
     # ============================================
-    with tab3:
+    with tab4:
         st.markdown("#### Upload a CSV file with SMILES")
         
         if conn:
@@ -676,9 +722,9 @@ def main():
                     )
     
     # ============================================
-    # TAB 4: HISTORY
+    # TAB 5: HISTORY
     # ============================================
-    with tab4:
+    with tab5:
         st.markdown("#### 📜 Prediction History")
         
         if conn:
@@ -724,6 +770,97 @@ def main():
     
     if conn:
         conn.close()
+
+# ============================================
+# DASHBOARD VIEW
+# ============================================
+def show_dashboard(conn):
+    st.markdown("#### 📈 Dashboard")
+    
+    if not conn:
+        st.warning("Database not connected")
+        return
+    
+    # Get stats
+    stats = get_dashboard_stats(conn)
+    pipeline_stats = get_pipeline_stats(conn)
+    recent = get_recent_predictions(conn, limit=5)
+    target_dist = get_target_distribution(conn)
+    campaign_summary = get_campaign_summary(conn)
+    
+    # Row 1: Main metrics
+    st.markdown("### Overview")
+    col1, col2, col3, col4 = st.columns(4)
+    
+    if stats:
+        col1.metric("Active Campaigns", stats['active_campaigns'])
+        col2.metric("Total Compounds", stats['total_compounds'])
+        col3.metric("Total Predictions", stats['total_predictions'])
+        col4.metric("Total Campaigns", stats['total_campaigns'])
+    
+    st.markdown("---")
+    
+    # Row 2: Pipeline overview and Category breakdown
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("### Pipeline Overview")
+        if pipeline_stats:
+            for stage_data in pipeline_stats:
+                stage = stage_data['pipeline_stage']
+                count = stage_data['count']
+                color = get_stage_color(stage)
+                st.markdown(f"{color} **{stage}**: {count} compounds")
+        else:
+            st.info("No compounds in pipeline yet")
+    
+    with col2:
+        st.markdown("### Category Breakdown")
+        if stats:
+            total = stats['long_count'] + stats['medium_count'] + stats['short_count']
+            if total > 0:
+                st.markdown(f"🟢 **Long** (>1 hr): {stats['long_count']} ({100*stats['long_count']//total}%)")
+                st.markdown(f"🟡 **Medium** (1-60 min): {stats['medium_count']} ({100*stats['medium_count']//total}%)")
+                st.markdown(f"🔴 **Short** (<1 min): {stats['short_count']} ({100*stats['short_count']//total}%)")
+            else:
+                st.info("No predictions yet")
+    
+    st.markdown("---")
+    
+    # Row 3: Best target distribution and Campaign summary
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("### Best Target Distribution")
+        if target_dist:
+            for target_data in target_dist:
+                target = target_data['best_target']
+                count = target_data['count']
+                st.markdown(f"**{target}**: {count} compounds")
+        else:
+            st.info("No predictions yet")
+    
+    with col2:
+        st.markdown("### Campaign Summary")
+        if campaign_summary:
+            for camp in campaign_summary:
+                status_color = "🟢" if camp['status'] == 'Active' else "🟡" if camp['status'] == 'Paused' else "⚫"
+                st.markdown(f"{status_color} **{camp['campaign_name']}**: {camp['compound_count']} compounds, {camp['advanced_count']} advanced")
+        else:
+            st.info("No campaigns yet")
+    
+    st.markdown("---")
+    
+    # Row 4: Recent activity
+    st.markdown("### Recent Predictions")
+    if recent:
+        for pred in recent:
+            time_str = time_ago(pred['predicted_at'])
+            campaign_str = f" in {pred['campaign_name']}" if pred['campaign_name'] else ""
+            category_color = "🟢" if pred['category'] == 'Long' else "🟡" if pred['category'] == 'Medium' else "🔴"
+            st.markdown(f"{category_color} **{pred['compound_name']}** → {pred['best_target']} ({pred['category']}){campaign_str} • {time_str}")
+    else:
+        st.info("No recent predictions")
 
 # ============================================
 # CAMPAIGN LIST VIEW
@@ -798,13 +935,11 @@ def show_campaign_detail(conn, models, desc_names):
         st.session_state.current_campaign = None
         return
     
-    # Back button
     if st.button("← Back to Campaigns"):
         st.session_state.current_campaign = None
         st.session_state.view_mode = 'table'
         st.rerun()
     
-    # Campaign header
     st.markdown(f"## {campaign['campaign_name']}")
     
     col1, col2, col3 = st.columns(3)
@@ -817,7 +952,6 @@ def show_campaign_detail(conn, models, desc_names):
     
     st.markdown("---")
     
-    # Status update
     col1, col2 = st.columns([3, 1])
     with col2:
         new_status = st.selectbox("Update Status", ["Active", "Paused", "Completed"], 
@@ -828,7 +962,6 @@ def show_campaign_detail(conn, models, desc_names):
                 st.success(f"Status updated to {new_status}")
                 st.rerun()
     
-    # View mode toggle
     col1, col2, col3 = st.columns([1, 1, 4])
     with col1:
         if st.button("📋 Table View", type="primary" if st.session_state.view_mode == 'table' else "secondary"):
@@ -841,7 +974,6 @@ def show_campaign_detail(conn, models, desc_names):
     
     st.markdown("---")
     
-    # Add compounds section
     with st.expander("➕ Add Compounds to Campaign"):
         uploaded_file = st.file_uploader("Upload CSV with SMILES", type=['csv'], key=f"upload_{campaign_id}")
         
@@ -895,7 +1027,6 @@ def show_campaign_detail(conn, models, desc_names):
     
     st.markdown("---")
     
-    # Show compounds based on view mode
     if st.session_state.view_mode == 'table':
         show_table_view(conn, campaign_id)
     else:
@@ -910,7 +1041,6 @@ def show_table_view(conn, campaign_id):
     compounds = get_campaign_compounds(conn, campaign_id)
     
     if compounds:
-        # Summary by pipeline stage
         stage_counts = {stage: 0 for stage in PIPELINE_STAGES}
         for c in compounds:
             stage = c['pipeline_stage'] if c['pipeline_stage'] else 'Predicted'
@@ -923,7 +1053,6 @@ def show_table_view(conn, campaign_id):
         
         st.markdown("---")
         
-        # Compound table with actions
         for compound in compounds:
             with st.container():
                 col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 2])
@@ -954,7 +1083,6 @@ def show_table_view(conn, campaign_id):
                         if update_compound_stage(conn, campaign_id, compound['compound_id'], new_stage):
                             st.rerun()
                 
-                # Notes section
                 with st.expander(f"Notes for {compound['compound_name']}", expanded=False):
                     current_notes = compound['notes'] if compound['notes'] else ""
                     new_notes = st.text_area("Notes", value=current_notes, key=f"notes_{compound['compound_id']}")
@@ -966,7 +1094,6 @@ def show_table_view(conn, campaign_id):
                 
                 st.markdown("---")
         
-        # Download
         compound_data = []
         for c in compounds:
             compound_data.append({
@@ -1002,14 +1129,12 @@ def show_pipeline_view(conn, campaign_id):
         st.info("No compounds in this campaign yet. Add some above!")
         return
     
-    # Group compounds by stage
     stage_compounds = {stage: [] for stage in PIPELINE_STAGES}
     for c in compounds:
         stage = c['pipeline_stage'] if c['pipeline_stage'] else 'Predicted'
         if stage in stage_compounds:
             stage_compounds[stage].append(c)
     
-    # Display Kanban columns
     cols = st.columns(len(PIPELINE_STAGES))
     
     for i, stage in enumerate(PIPELINE_STAGES):
@@ -1020,17 +1145,14 @@ def show_pipeline_view(conn, campaign_id):
             
             for compound in stage_compounds[stage]:
                 with st.container():
-                    # Compound card
                     st.markdown(f"**{compound['compound_name'][:15]}...**" if len(compound['compound_name']) > 15 else f"**{compound['compound_name']}**")
                     
-                    # Best target badge
                     category_color = "🟢" if compound['category'] == 'Long' else "🟡" if compound['category'] == 'Medium' else "🔴"
-                    st.caption(f"{category_color} {compound['best_target']} | {format_time(compound['hsp90_tau_seconds'] if compound['best_target'] == 'HSP90' else compound['axl_tau_seconds'] if compound['best_target'] == 'AXL' else compound['egfr_tau_seconds'])}")
+                    best_time = compound['hsp90_tau_seconds'] if compound['best_target'] == 'HSP90' else compound['axl_tau_seconds'] if compound['best_target'] == 'AXL' else compound['egfr_tau_seconds']
+                    st.caption(f"{category_color} {compound['best_target']} | {format_time(best_time)}")
                     
-                    # Move buttons
                     button_cols = st.columns(2)
                     
-                    # Move left
                     if i > 0:
                         with button_cols[0]:
                             if st.button("◀", key=f"left_{compound['compound_id']}_{stage}"):
@@ -1038,7 +1160,6 @@ def show_pipeline_view(conn, campaign_id):
                                 if update_compound_stage(conn, campaign_id, compound['compound_id'], new_stage):
                                     st.rerun()
                     
-                    # Move right
                     if i < len(PIPELINE_STAGES) - 1:
                         with button_cols[1]:
                             if st.button("▶", key=f"right_{compound['compound_id']}_{stage}"):
@@ -1048,7 +1169,6 @@ def show_pipeline_view(conn, campaign_id):
                     
                     st.markdown("---")
     
-    # Summary stats
     st.markdown("### Summary")
     col1, col2, col3 = st.columns(3)
     
