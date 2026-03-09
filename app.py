@@ -490,39 +490,25 @@ def time_ago(dt):
 # MAIN APP
 # ============================================
 def main():
-    # Header
     st.title("🎯 KineticScout")
     st.markdown("### Multi-Target Drug Residence Time Prediction")
     st.markdown("---")
     
-    # Load resources
     models = load_models()
     desc_names = load_descriptors()
-    
-    # Database connection
     conn = get_db_connection()
     
-    # Five tabs
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Dashboard", "📁 Campaigns", "🔬 Quick Predict", "📊 Batch Upload", "📜 History"])
     
-    # ============================================
-    # TAB 1: DASHBOARD
-    # ============================================
     with tab1:
         show_dashboard(conn)
     
-    # ============================================
-    # TAB 2: CAMPAIGNS
-    # ============================================
     with tab2:
         if st.session_state.current_campaign is None:
             show_campaign_list(conn, models, desc_names)
         else:
             show_campaign_detail(conn, models, desc_names)
     
-    # ============================================
-    # TAB 3: QUICK PREDICT
-    # ============================================
     with tab3:
         st.markdown("#### Enter a SMILES string")
         
@@ -547,7 +533,7 @@ def main():
                 preds = predict_all_targets(smiles_input, models, desc_names)
                 
                 if preds is None:
-                    st.error("❌ Invalid SMILES")
+                    st.error("Invalid SMILES")
                 else:
                     st.markdown("---")
                     
@@ -570,7 +556,7 @@ def main():
                             conf = int(preds[target]['r2'] * 100)
                             
                             if target == best:
-                                st.success(f"**{target}**: {format_time(rt)} | Confidence: {conf}% ⬆️ Best")
+                                st.success(f"**{target}**: {format_time(rt)} | Confidence: {conf}% | Best")
                             else:
                                 st.info(f"**{target}**: {format_time(rt)} | Confidence: {conf}%")
                         
@@ -588,11 +574,8 @@ def main():
                                                float(preds['EGFR']['rt']), 
                                                best, category, confidence)
                                 if pred_result:
-                                    st.success("✅ Saved to database!")
+                                    st.success("Saved to database!")
     
-    # ============================================
-    # TAB 4: BATCH UPLOAD
-    # ============================================
     with tab4:
         st.markdown("#### Upload a CSV file with SMILES")
         
@@ -620,7 +603,7 @@ def main():
         })
         
         st.download_button(
-            "📥 Download Template CSV",
+            "Download Template CSV",
             template_df.to_csv(index=False),
             "kineticscout_template.csv",
             "text/csv"
@@ -638,13 +621,13 @@ def main():
                     break
             
             if smiles_col is None:
-                st.error("❌ No SMILES column found!")
+                st.error("No SMILES column found!")
             else:
-                st.success(f"✅ Loaded {len(df)} compounds")
+                st.success(f"Loaded {len(df)} compounds")
                 
                 save_to_db = st.checkbox("Save predictions to database", value=True)
                 
-                if st.button("🚀 Predict All Targets", type="primary"):
+                if st.button("Predict All Targets", type="primary"):
                     results_list = []
                     progress = st.progress(0)
                     
@@ -675,9 +658,9 @@ def main():
                             
                             results_list.append({
                                 'Compound': compound_id_name,
-                                'HSP90 τ': format_time(preds['HSP90']['rt']),
-                                'AXL τ': format_time(preds['AXL']['rt']),
-                                'EGFR τ': format_time(preds['EGFR']['rt']),
+                                'HSP90': format_time(preds['HSP90']['rt']),
+                                'AXL': format_time(preds['AXL']['rt']),
+                                'EGFR': format_time(preds['EGFR']['rt']),
                                 'Best Target': best_target,
                                 'Category': category,
                                 'Confidence': f"{confidence}%"
@@ -685,9 +668,9 @@ def main():
                         else:
                             results_list.append({
                                 'Compound': compound_id_name,
-                                'HSP90 τ': 'Error',
-                                'AXL τ': 'Error',
-                                'EGFR τ': 'Error',
+                                'HSP90': 'Error',
+                                'AXL': 'Error',
+                                'EGFR': 'Error',
                                 'Best Target': 'N/A',
                                 'Category': 'N/A',
                                 'Confidence': 'N/A'
@@ -696,36 +679,33 @@ def main():
                         progress.progress((idx + 1) / len(df))
                     
                     st.markdown("---")
-                    st.markdown("### 📊 Results")
+                    st.markdown("### Results")
                     
                     results_df = pd.DataFrame(results_list)
                     
                     col1, col2, col3, col4 = st.columns(4)
                     col1.metric("Total", len(results_df))
-                    col2.metric("Long τ", len(results_df[results_df['Category'] == 'Long']))
-                    col3.metric("Medium τ", len(results_df[results_df['Category'] == 'Medium']))
-                    col4.metric("Short τ", len(results_df[results_df['Category'] == 'Short']))
+                    col2.metric("Long", len(results_df[results_df['Category'] == 'Long']))
+                    col3.metric("Medium", len(results_df[results_df['Category'] == 'Medium']))
+                    col4.metric("Short", len(results_df[results_df['Category'] == 'Short']))
                     
                     st.markdown("---")
                     st.dataframe(results_df, hide_index=True)
                     
                     if save_to_db and conn:
-                        st.success("✅ Predictions saved to database!")
+                        st.success("Predictions saved to database!")
                         if campaign_id:
-                            st.success(f"✅ Compounds added to campaign!")
+                            st.success("Compounds added to campaign!")
                     
                     st.download_button(
-                        "📥 Download Results",
+                        "Download Results",
                         results_df.to_csv(index=False),
                         "kineticscout_results.csv",
                         "text/csv"
                     )
     
-    # ============================================
-    # TAB 5: HISTORY
-    # ============================================
     with tab5:
-        st.markdown("#### 📜 Prediction History")
+        st.markdown("#### Prediction History")
         
         if conn:
             history = get_prediction_history(conn)
@@ -733,9 +713,9 @@ def main():
             if history:
                 history_df = pd.DataFrame(history)
                 
-                history_df['HSP90 τ'] = history_df['hsp90_tau_seconds'].apply(format_time)
-                history_df['AXL τ'] = history_df['axl_tau_seconds'].apply(format_time)
-                history_df['EGFR τ'] = history_df['egfr_tau_seconds'].apply(format_time)
+                history_df['HSP90'] = history_df['hsp90_tau_seconds'].apply(format_time)
+                history_df['AXL'] = history_df['axl_tau_seconds'].apply(format_time)
+                history_df['EGFR'] = history_df['egfr_tau_seconds'].apply(format_time)
                 history_df['Predicted'] = pd.to_datetime(history_df['predicted_at']).dt.strftime('%Y-%m-%d %H:%M')
                 
                 col1, col2, col3 = st.columns(3)
@@ -745,13 +725,13 @@ def main():
                 
                 st.markdown("---")
                 
-                display_df = history_df[['compound_name', 'HSP90 τ', 'AXL τ', 'EGFR τ', 'best_target', 'category', 'confidence', 'Predicted']]
-                display_df.columns = ['Compound', 'HSP90 τ', 'AXL τ', 'EGFR τ', 'Best Target', 'Category', 'Confidence', 'Predicted']
+                display_df = history_df[['compound_name', 'HSP90', 'AXL', 'EGFR', 'best_target', 'category', 'confidence', 'Predicted']]
+                display_df.columns = ['Compound', 'HSP90', 'AXL', 'EGFR', 'Best Target', 'Category', 'Confidence', 'Predicted']
                 
                 st.dataframe(display_df, hide_index=True)
                 
                 st.download_button(
-                    "📥 Download History",
+                    "Download History",
                     display_df.to_csv(index=False),
                     "kineticscout_history.csv",
                     "text/csv"
@@ -761,7 +741,6 @@ def main():
         else:
             st.warning("Database not connected. History unavailable.")
     
-    # Footer
     st.markdown("---")
     st.markdown(
         "<p style='text-align: center; color: gray;'>KineticScout v2.0 | NovoDyn Therapeutics</p>",
@@ -775,20 +754,18 @@ def main():
 # DASHBOARD VIEW
 # ============================================
 def show_dashboard(conn):
-    st.markdown("#### 📈 Dashboard")
+    st.markdown("#### Dashboard")
     
     if not conn:
         st.warning("Database not connected")
         return
     
-    # Get stats
     stats = get_dashboard_stats(conn)
     pipeline_stats = get_pipeline_stats(conn)
     recent = get_recent_predictions(conn, limit=5)
     target_dist = get_target_distribution(conn)
     campaign_summary = get_campaign_summary(conn)
     
-    # Row 1: Main metrics
     st.markdown("### Overview")
     col1, col2, col3, col4 = st.columns(4)
     
@@ -800,7 +777,6 @@ def show_dashboard(conn):
     
     st.markdown("---")
     
-    # Row 2: Pipeline overview and Category breakdown
     col1, col2 = st.columns(2)
     
     with col1:
@@ -817,17 +793,19 @@ def show_dashboard(conn):
     with col2:
         st.markdown("### Category Breakdown")
         if stats:
-            total = stats['long_count'] + stats['medium_count'] + stats['short_count']
+            total = (stats['long_count'] or 0) + (stats['medium_count'] or 0) + (stats['short_count'] or 0)
             if total > 0:
-                st.markdown(f"🟢 **Long** (>1 hr): {stats['long_count']} ({100*stats['long_count']//total}%)")
-                st.markdown(f"🟡 **Medium** (1-60 min): {stats['medium_count']} ({100*stats['medium_count']//total}%)")
-                st.markdown(f"🔴 **Short** (<1 min): {stats['short_count']} ({100*stats['short_count']//total}%)")
+                long_pct = 100 * (stats['long_count'] or 0) // total
+                med_pct = 100 * (stats['medium_count'] or 0) // total
+                short_pct = 100 * (stats['short_count'] or 0) // total
+                st.markdown(f"🟢 **Long** (>1 hr): {stats['long_count'] or 0} ({long_pct}%)")
+                st.markdown(f"🟡 **Medium** (1 to 60 min): {stats['medium_count'] or 0} ({med_pct}%)")
+                st.markdown(f"🔴 **Short** (<1 min): {stats['short_count'] or 0} ({short_pct}%)")
             else:
                 st.info("No predictions yet")
     
     st.markdown("---")
     
-    # Row 3: Best target distribution and Campaign summary
     col1, col2 = st.columns(2)
     
     with col1:
@@ -845,20 +823,19 @@ def show_dashboard(conn):
         if campaign_summary:
             for camp in campaign_summary:
                 status_color = "🟢" if camp['status'] == 'Active' else "🟡" if camp['status'] == 'Paused' else "⚫"
-                st.markdown(f"{status_color} **{camp['campaign_name']}**: {camp['compound_count']} compounds, {camp['advanced_count']} advanced")
+                st.markdown(f"{status_color} **{camp['campaign_name']}**: {camp['compound_count']} compounds, {camp['advanced_count'] or 0} advanced")
         else:
             st.info("No campaigns yet")
     
     st.markdown("---")
     
-    # Row 4: Recent activity
     st.markdown("### Recent Predictions")
     if recent:
         for pred in recent:
             time_str = time_ago(pred['predicted_at'])
             campaign_str = f" in {pred['campaign_name']}" if pred['campaign_name'] else ""
             category_color = "🟢" if pred['category'] == 'Long' else "🟡" if pred['category'] == 'Medium' else "🔴"
-            st.markdown(f"{category_color} **{pred['compound_name']}** → {pred['best_target']} ({pred['category']}){campaign_str} • {time_str}")
+            st.markdown(f"{category_color} **{pred['compound_name']}** | {pred['best_target']} ({pred['category']}){campaign_str} | {time_str}")
     else:
         st.info("No recent predictions")
 
@@ -866,9 +843,9 @@ def show_dashboard(conn):
 # CAMPAIGN LIST VIEW
 # ============================================
 def show_campaign_list(conn, models, desc_names):
-    st.markdown("#### 📁 My Campaigns")
+    st.markdown("#### My Campaigns")
     
-    with st.expander("➕ Create New Campaign", expanded=False):
+    with st.expander("Create New Campaign", expanded=False):
         col1, col2 = st.columns(2)
         with col1:
             new_name = st.text_input("Campaign Name", placeholder="e.g., EGFR Inhibitors Q1 2024")
@@ -883,7 +860,7 @@ def show_campaign_list(conn, models, desc_names):
             else:
                 campaign_id = create_campaign(conn, new_name, new_target, new_description)
                 if campaign_id:
-                    st.success(f"✅ Campaign '{new_name}' created!")
+                    st.success(f"Campaign '{new_name}' created!")
                     st.rerun()
                 else:
                     st.error("Failed to create campaign")
@@ -912,7 +889,7 @@ def show_campaign_list(conn, models, desc_names):
                             st.rerun()
                     
                     with col4:
-                        if st.button("🗑️", key=f"delete_{campaign['campaign_id']}"):
+                        if st.button("Delete", key=f"delete_{campaign['campaign_id']}"):
                             if delete_campaign(conn, campaign['campaign_id']):
                                 st.success("Campaign deleted!")
                                 st.rerun()
@@ -935,7 +912,7 @@ def show_campaign_detail(conn, models, desc_names):
         st.session_state.current_campaign = None
         return
     
-    if st.button("← Back to Campaigns"):
+    if st.button("Back to Campaigns"):
         st.session_state.current_campaign = None
         st.session_state.view_mode = 'table'
         st.rerun()
@@ -964,17 +941,17 @@ def show_campaign_detail(conn, models, desc_names):
     
     col1, col2, col3 = st.columns([1, 1, 4])
     with col1:
-        if st.button("📋 Table View", type="primary" if st.session_state.view_mode == 'table' else "secondary"):
+        if st.button("Table View", type="primary" if st.session_state.view_mode == 'table' else "secondary"):
             st.session_state.view_mode = 'table'
             st.rerun()
     with col2:
-        if st.button("📊 Pipeline View", type="primary" if st.session_state.view_mode == 'pipeline' else "secondary"):
+        if st.button("Pipeline View", type="primary" if st.session_state.view_mode == 'pipeline' else "secondary"):
             st.session_state.view_mode = 'pipeline'
             st.rerun()
     
     st.markdown("---")
     
-    with st.expander("➕ Add Compounds to Campaign"):
+    with st.expander("Add Compounds to Campaign"):
         uploaded_file = st.file_uploader("Upload CSV with SMILES", type=['csv'], key=f"upload_{campaign_id}")
         
         if uploaded_file is not None:
@@ -991,7 +968,7 @@ def show_campaign_detail(conn, models, desc_names):
             else:
                 st.success(f"Found {len(df)} compounds")
                 
-                if st.button("Add & Predict", type="primary", key=f"predict_{campaign_id}"):
+                if st.button("Add and Predict", type="primary", key=f"predict_{campaign_id}"):
                     progress = st.progress(0)
                     added_count = 0
                     
@@ -1022,7 +999,7 @@ def show_campaign_detail(conn, models, desc_names):
                         
                         progress.progress((idx + 1) / len(df))
                     
-                    st.success(f"✅ Added {added_count} compounds to campaign!")
+                    st.success(f"Added {added_count} compounds to campaign!")
                     st.rerun()
     
     st.markdown("---")
@@ -1036,7 +1013,7 @@ def show_campaign_detail(conn, models, desc_names):
 # TABLE VIEW
 # ============================================
 def show_table_view(conn, campaign_id):
-    st.markdown("### 📋 Compounds Table")
+    st.markdown("### Compounds Table")
     
     compounds = get_campaign_compounds(conn, campaign_id)
     
@@ -1098,9 +1075,9 @@ def show_table_view(conn, campaign_id):
         for c in compounds:
             compound_data.append({
                 'Compound': c['compound_name'],
-                'HSP90 τ': format_time(c['hsp90_tau_seconds']),
-                'AXL τ': format_time(c['axl_tau_seconds']),
-                'EGFR τ': format_time(c['egfr_tau_seconds']),
+                'HSP90': format_time(c['hsp90_tau_seconds']),
+                'AXL': format_time(c['axl_tau_seconds']),
+                'EGFR': format_time(c['egfr_tau_seconds']),
                 'Best Target': c['best_target'] if c['best_target'] else 'N/A',
                 'Category': c['category'] if c['category'] else 'N/A',
                 'Stage': c['pipeline_stage'] if c['pipeline_stage'] else 'Predicted',
@@ -1109,7 +1086,7 @@ def show_table_view(conn, campaign_id):
         
         compound_df = pd.DataFrame(compound_data)
         st.download_button(
-            "📥 Download Campaign Data",
+            "Download Campaign Data",
             compound_df.to_csv(index=False),
             f"campaign_{campaign_id}_compounds.csv",
             "text/csv"
@@ -1121,7 +1098,7 @@ def show_table_view(conn, campaign_id):
 # PIPELINE VIEW (KANBAN)
 # ============================================
 def show_pipeline_view(conn, campaign_id):
-    st.markdown("### 📊 Pipeline View")
+    st.markdown("### Pipeline View")
     
     compounds = get_campaign_compounds(conn, campaign_id)
     
@@ -1145,7 +1122,10 @@ def show_pipeline_view(conn, campaign_id):
             
             for compound in stage_compounds[stage]:
                 with st.container():
-                    st.markdown(f"**{compound['compound_name'][:15]}...**" if len(compound['compound_name']) > 15 else f"**{compound['compound_name']}**")
+                    name = compound['compound_name']
+                    if len(name) > 15:
+                        name = name[:15] + "..."
+                    st.markdown(f"**{name}**")
                     
                     category_color = "🟢" if compound['category'] == 'Long' else "🟡" if compound['category'] == 'Medium' else "🔴"
                     best_time = compound['hsp90_tau_seconds'] if compound['best_target'] == 'HSP90' else compound['axl_tau_seconds'] if compound['best_target'] == 'AXL' else compound['egfr_tau_seconds']
@@ -1155,14 +1135,14 @@ def show_pipeline_view(conn, campaign_id):
                     
                     if i > 0:
                         with button_cols[0]:
-                            if st.button("◀", key=f"left_{compound['compound_id']}_{stage}"):
+                            if st.button("<", key=f"left_{compound['compound_id']}_{stage}"):
                                 new_stage = PIPELINE_STAGES[i - 1]
                                 if update_compound_stage(conn, campaign_id, compound['compound_id'], new_stage):
                                     st.rerun()
                     
                     if i < len(PIPELINE_STAGES) - 1:
                         with button_cols[1]:
-                            if st.button("▶", key=f"right_{compound['compound_id']}_{stage}"):
+                            if st.button(">", key=f"right_{compound['compound_id']}_{stage}"):
                                 new_stage = PIPELINE_STAGES[i + 1]
                                 if update_compound_stage(conn, campaign_id, compound['compound_id'], new_stage):
                                     st.rerun()
