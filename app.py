@@ -9,6 +9,7 @@ from rdkit.Chem import Descriptors, Draw
 from rdkit.ML.Descriptors import MoleculeDescriptors
 from datetime import datetime
 import warnings
+import pyrebase
 warnings.filterwarnings('ignore')
 
 # ============================================
@@ -21,17 +22,130 @@ st.set_page_config(
 )
 
 # ============================================
-# SESSION STATE
+# SESSION STATE INITIALIZATION
 # ============================================
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
+if 'user_email' not in st.session_state:
+    st.session_state.user_email = None
+if 'user_id' not in st.session_state:
+    st.session_state.user_id = None
 if 'current_campaign' not in st.session_state:
     st.session_state.current_campaign = None
 if 'view_mode' not in st.session_state:
     st.session_state.view_mode = 'table'
 if 'selected_compound' not in st.session_state:
     st.session_state.selected_compound = None
+if 'auth_message' not in st.session_state:
+    st.session_state.auth_message = None
+if 'auth_message_type' not in st.session_state:
+    st.session_state.auth_message_type = None
 
 # Pipeline stages
 PIPELINE_STAGES = ['Predicted', 'To Synthesize', 'In Synthesis', 'Testing', 'Advanced', 'Deprioritized']
+
+# ============================================
+# FIREBASE CONFIGURATION
+# ============================================
+def get_firebase_auth():
+    try:
+        config = {
+            "apiKey": st.secrets["firebase"]["api_key"],
+            "authDomain": st.secrets["firebase"]["auth_domain"],
+            "databaseURL": st.secrets["firebase"]["database_url"],
+            "storageBucket": st.secrets["firebase"]["storage_bucket"],
+            "projectId": st.secrets["firebase"]["project_id"]
+        }
+        firebase = pyrebase.initialize_app(config)
+        return firebase.auth()
+    except Exception as e:
+        return None
+
+# ============================================
+# AUTHENTICATION FUNCTIONS
+# ============================================
+def login_user(email, password):
+    try:
+        auth = get_firebase_auth()
+        if auth is None:
+            return False, "Authentication service unavailable"
+        user = auth.sign_in_with_email_and_password(email, password)
+        st.session_state.logged_in = True
+        st.session_state.user_email = email
+        conn = get_db_connection()
+        if conn:
+            user_id = get_or_create_user(conn, email)
+            st.session_state.user_id = user_id
+            conn.close()
+        return True, None
+    except Exception as e:
+        error_message = str(e)
+        if "INVALID_PASSWORD" in error_message or "INVALID_LOGIN_CREDENTIALS" in error_message:
+            return False, "Invalid email or password"
+        elif "EMAIL_NOT_FOUND" in error_message:
+            return False, "Email not found. Please sign up first."
+        elif "INVALID_EMAIL" in error_message:
+            return False, "Invalid email format"
+        elif "TOO_MANY_ATTEMPTS" in error_message:
+            return False, "Too many failed attempts. Try again later."
+        else:
+            return False, "Login failed. Please try again."
+
+def signup_user(email, password):
+    try:
+        auth = get_firebase_auth()
+        if auth is None:
+            return False, "Authentication service unavailable"
+        user = auth.create_user_with_email_and_password(email, password)
+        st.session_state.logged_in = True
+        st.session_state.user_email = email
+        conn = get_db_connection()
+        if conn:
+            user_id = get_or_create_user(conn, email)
+            st.session_state.user_id = user_id
+            conn.close()
+        return True, None
+    except Exception as e:
+        error_message = str(e)
+        if "EMAIL_EXISTS" in error_message:
+            return False, "Email already exists. Please login instead."
+        elif "WEAK_PASSWORD" in error_message:
+            return False, "Password should be at least 6 characters"
+        elif "INVALID_EMAIL" in error_message:
+            return False, "Invalid email format"
+        else:
+            return False, "Signup failed. Please try again."
+
+def logout_user():
+    st.session_state.logged_in = False
+    st.session_state.user_email = None
+    st.session_state.user_id = None
+    st.session_state.current_campaign = None
+    st.session_state.view_mode = 'table'
+    st.session_state.auth_message = None
+    st.session_state.auth_message_type = None
+
+def get_or_create_user(conn, email):
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cursor.execute("SELECT user_id FROM users WHERE email = %s", (email,))
+        result = cursor.fetchone()
+        if result:
+            return result['user_id']
+        else:
+            name = email.split('@')[0]
+            cursor.execute("""
+                INSERT INTO users (email, name, role)
+                VALUES (%s, %s, 'Chemist')
+                RETURNING user_id
+            """, (email, name))
+            conn.commit()
+            return cursor.fetchone()['user_id']
+    except Exception as e:
+        conn.rollback()
+        return None
+    finally:
+        cursor.close()
 
 # ============================================
 # DATABASE CONNECTION
@@ -286,7 +400,6 @@ def get_campaign(conn, campaign_id):
         cursor.close()
 
 def get_campaign_compounds(conn, campaign_id):
-    """Get compounds in a campaign with their LATEST prediction only"""
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     try:
         cursor.execute("""
@@ -493,260 +606,110 @@ def time_ago(dt):
         return "Unknown"
 
 # ============================================
-# MAIN APP
+# LOGIN PAGE
 # ============================================
-def main():
+def show_login_page():
     st.title("🎯 KineticScout")
     st.markdown("### Multi-Target Drug Residence Time Prediction")
     st.markdown("---")
     
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        st.markdown("#### Welcome! Please login or sign up.")
+        st.markdown("")
+        
+        email = st.text_input("Email", key="auth_email_input", placeholder="your@email.com")
+        password = st.text_input("Password", type="password", key="auth_password_input", placeholder="Enter password (min 6 characters)")
+        
+        st.markdown("")
+        
+        col_a, col_b = st.columns(2)
+        
+        with col_a:
+            login_clicked = st.button("Login", type="primary", key="auth_login_button", use_container_width=True)
+        
+        with col_b:
+            signup_clicked = st.button("Sign Up", key="auth_signup_button", use_container_width=True)
+        
+        if login_clicked:
+            if email and password:
+                success, error = login_user(email, password)
+                if success:
+                    st.success("Login successful!")
+                    st.rerun()
+                else:
+                    st.error(error)
+            else:
+                st.error("Please enter email and password")
+        
+        if signup_clicked:
+            if email and password:
+                if len(password) < 6:
+                    st.error("Password should be at least 6 characters")
+                else:
+                    success, error = signup_user(email, password)
+                    if success:
+                        st.success("Account created successfully!")
+                        st.rerun()
+                    else:
+                        st.error(error)
+            else:
+                st.error("Please enter email and password")
+        
+        st.markdown("---")
+        st.markdown("<p style='text-align: center; color: gray;'>KineticScout v2.0 | NovoDyn Therapeutics</p>", unsafe_allow_html=True)
+
+# ============================================
+# MAIN APP (After Login)
+# ============================================
+def show_main_app():
+    # Sidebar with user info and logout
+    with st.sidebar:
+        st.markdown(f"**Logged in as:**")
+        st.markdown(f"{st.session_state.user_email}")
+        st.markdown("---")
+        if st.button("Logout", key="sidebar_logout_button", use_container_width=True):
+            logout_user()
+            st.rerun()
+    
+    # Header
+    st.title("🎯 KineticScout")
+    st.markdown("### Multi-Target Drug Residence Time Prediction")
+    st.markdown("---")
+    
+    # Load resources
     models = load_models()
     desc_names = load_descriptors()
     conn = get_db_connection()
     
+    # Tabs
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Dashboard", "📁 Campaigns", "🔬 Quick Predict", "📊 Batch Upload", "📜 History"])
     
+    # TAB 1: DASHBOARD
     with tab1:
         show_dashboard(conn)
     
+    # TAB 2: CAMPAIGNS
     with tab2:
         if st.session_state.current_campaign is None:
             show_campaign_list(conn, models, desc_names)
         else:
             show_campaign_detail(conn, models, desc_names)
     
+    # TAB 3: QUICK PREDICT
     with tab3:
-        st.markdown("#### Enter a SMILES string")
-        
-        smiles_input = st.text_input("SMILES", placeholder="e.g., Cc1ccc(NC(=O)c2ccc(CN3CCN(C)CC3)cc2)cc1Nc1nccc(-c2cccnc2)n1")
-        compound_name = st.text_input("Compound Name (optional)", placeholder="e.g., Imatinib")
-        
-        save_single = st.checkbox("Save to database", value=True, key="save_single")
-        
-        with st.expander("📝 Example Compounds"):
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("**Imatinib:**")
-                st.code("Cc1ccc(NC(=O)c2ccc(CN3CCN(C)CC3)cc2)cc1Nc1nccc(-c2cccnc2)n1", language=None)
-            with col2:
-                st.markdown("**Gefitinib:**")
-                st.code("COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN1CCOCC1", language=None)
-        
-        if st.button("🔮 Predict", type="primary"):
-            if not smiles_input:
-                st.error("Please enter a SMILES")
-            else:
-                preds = predict_all_targets(smiles_input, models, desc_names)
-                
-                if preds is None:
-                    st.error("Invalid SMILES")
-                else:
-                    st.markdown("---")
-                    
-                    col1, col2 = st.columns([1, 2])
-                    with col1:
-                        mol = Chem.MolFromSmiles(smiles_input)
-                        img = Draw.MolToImage(mol, size=(300, 300))
-                        st.image(img, caption="Structure")
-                    
-                    with col2:
-                        st.markdown("### Predicted Residence Times")
-                        
-                        best, best_conf = get_best_target(preds)
-                        best_rt = preds[best]['rt']
-                        category = get_category(best_rt)
-                        confidence = int(best_conf * 100)
-                        
-                        for target in ['HSP90', 'AXL', 'EGFR']:
-                            rt = preds[target]['rt']
-                            conf = int(preds[target]['r2'] * 100)
-                            
-                            if target == best:
-                                st.success(f"**{target}**: {format_time(rt)} | Confidence: {conf}% | Best")
-                            else:
-                                st.info(f"**{target}**: {format_time(rt)} | Confidence: {conf}%")
-                        
-                        st.markdown("---")
-                        st.markdown(f"**Category:** {category}")
-                        
-                        if conn and save_single:
-                            mw = get_molecular_weight(smiles_input)
-                            name = compound_name if compound_name else f"Compound_{datetime.now().strftime('%H%M%S')}"
-                            db_compound_id = save_compound(conn, smiles_input, name, mw, "")
-                            if db_compound_id:
-                                pred_result = save_prediction(conn, db_compound_id, None,
-                                               float(preds['HSP90']['rt']), 
-                                               float(preds['AXL']['rt']), 
-                                               float(preds['EGFR']['rt']), 
-                                               best, category, confidence)
-                                if pred_result:
-                                    st.success("Saved to database!")
+        show_quick_predict(conn, models, desc_names)
     
+    # TAB 4: BATCH UPLOAD
     with tab4:
-        st.markdown("#### Upload a CSV file with SMILES")
-        
-        if conn:
-            campaigns = get_all_campaigns(conn)
-            campaign_options = ["No Campaign (Quick Predict)"] + [f"{c['campaign_name']} (ID: {c['campaign_id']})" for c in campaigns]
-            selected_campaign = st.selectbox("Add to Campaign (optional)", campaign_options)
-            
-            if selected_campaign != "No Campaign (Quick Predict)":
-                campaign_id = int(selected_campaign.split("ID: ")[1].rstrip(")"))
-            else:
-                campaign_id = None
-        else:
-            campaign_id = None
-        
-        template_df = pd.DataFrame({
-            'Compound_ID': ['Imatinib', 'Gefitinib', 'Erlotinib'],
-            'SMILES': [
-                'Cc1ccc(NC(=O)c2ccc(CN3CCN(C)CC3)cc2)cc1Nc1nccc(-c2cccnc2)n1',
-                'COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN1CCOCC1',
-                'COCCOc1cc2ncnc(Nc3cccc(C#C)c3)c2cc1OCCOC'
-            ],
-            'Original_Target': ['BCR-ABL', 'EGFR', 'EGFR'],
-            'MW': [493.6, 446.9, 393.4]
-        })
-        
-        st.download_button(
-            "Download Template CSV",
-            template_df.to_csv(index=False),
-            "kineticscout_template.csv",
-            "text/csv"
-        )
-        
-        uploaded_file = st.file_uploader("Upload CSV", type=['csv'], label_visibility="collapsed")
-        
-        if uploaded_file is not None:
-            df = pd.read_csv(uploaded_file)
-            
-            smiles_col = None
-            for col in df.columns:
-                if 'smiles' in col.lower():
-                    smiles_col = col
-                    break
-            
-            if smiles_col is None:
-                st.error("No SMILES column found!")
-            else:
-                st.success(f"Loaded {len(df)} compounds")
-                
-                save_to_db = st.checkbox("Save predictions to database", value=True)
-                
-                if st.button("Predict All Targets", type="primary"):
-                    results_list = []
-                    progress = st.progress(0)
-                    
-                    for idx, row in df.iterrows():
-                        smiles = row[smiles_col]
-                        compound_id_name = row.get('Compound_ID', row.get('compound_id', f'Cpd_{idx+1}'))
-                        original_target = row.get('Original_Target', row.get('original_target', ''))
-                        
-                        preds = predict_all_targets(smiles, models, desc_names)
-                        
-                        if preds:
-                            best_target, best_conf = get_best_target(preds)
-                            best_rt = preds[best_target]['rt']
-                            category = get_category(best_rt)
-                            confidence = int(best_conf * 100)
-                            
-                            if conn and save_to_db:
-                                mw = get_molecular_weight(smiles)
-                                db_compound_id = save_compound(conn, smiles, str(compound_id_name), mw, str(original_target))
-                                if db_compound_id:
-                                    save_prediction(conn, db_compound_id, campaign_id,
-                                                   float(preds['HSP90']['rt']), 
-                                                   float(preds['AXL']['rt']), 
-                                                   float(preds['EGFR']['rt']), 
-                                                   best_target, category, confidence)
-                                    if campaign_id:
-                                        add_compound_to_campaign(conn, campaign_id, db_compound_id)
-                            
-                            results_list.append({
-                                'Compound': compound_id_name,
-                                'HSP90': format_time(preds['HSP90']['rt']),
-                                'AXL': format_time(preds['AXL']['rt']),
-                                'EGFR': format_time(preds['EGFR']['rt']),
-                                'Best Target': best_target,
-                                'Category': category,
-                                'Confidence': f"{confidence}%"
-                            })
-                        else:
-                            results_list.append({
-                                'Compound': compound_id_name,
-                                'HSP90': 'Error',
-                                'AXL': 'Error',
-                                'EGFR': 'Error',
-                                'Best Target': 'N/A',
-                                'Category': 'N/A',
-                                'Confidence': 'N/A'
-                            })
-                        
-                        progress.progress((idx + 1) / len(df))
-                    
-                    st.markdown("---")
-                    st.markdown("### Results")
-                    
-                    results_df = pd.DataFrame(results_list)
-                    
-                    col1, col2, col3, col4 = st.columns(4)
-                    col1.metric("Total", len(results_df))
-                    col2.metric("Long", len(results_df[results_df['Category'] == 'Long']))
-                    col3.metric("Medium", len(results_df[results_df['Category'] == 'Medium']))
-                    col4.metric("Short", len(results_df[results_df['Category'] == 'Short']))
-                    
-                    st.markdown("---")
-                    st.dataframe(results_df, hide_index=True)
-                    
-                    if save_to_db and conn:
-                        st.success("Predictions saved to database!")
-                        if campaign_id:
-                            st.success("Compounds added to campaign!")
-                    
-                    st.download_button(
-                        "Download Results",
-                        results_df.to_csv(index=False),
-                        "kineticscout_results.csv",
-                        "text/csv"
-                    )
+        show_batch_upload(conn, models, desc_names)
     
+    # TAB 5: HISTORY
     with tab5:
-        st.markdown("#### Prediction History")
-        
-        if conn:
-            history = get_prediction_history(conn)
-            
-            if history:
-                history_df = pd.DataFrame(history)
-                
-                history_df['HSP90'] = history_df['hsp90_tau_seconds'].apply(format_time)
-                history_df['AXL'] = history_df['axl_tau_seconds'].apply(format_time)
-                history_df['EGFR'] = history_df['egfr_tau_seconds'].apply(format_time)
-                history_df['Predicted'] = pd.to_datetime(history_df['predicted_at']).dt.strftime('%Y-%m-%d %H:%M')
-                
-                col1, col2, col3 = st.columns(3)
-                col1.metric("Total Predictions", len(history_df))
-                col2.metric("Long Residence", len(history_df[history_df['category'] == 'Long']))
-                col3.metric("Short Residence", len(history_df[history_df['category'] == 'Short']))
-                
-                st.markdown("---")
-                
-                display_df = history_df[['compound_name', 'HSP90', 'AXL', 'EGFR', 'best_target', 'category', 'confidence', 'Predicted']]
-                display_df.columns = ['Compound', 'HSP90', 'AXL', 'EGFR', 'Best Target', 'Category', 'Confidence', 'Predicted']
-                
-                st.dataframe(display_df, hide_index=True)
-                
-                st.download_button(
-                    "Download History",
-                    display_df.to_csv(index=False),
-                    "kineticscout_history.csv",
-                    "text/csv"
-                )
-            else:
-                st.info("No predictions yet. Upload compounds to get started!")
-        else:
-            st.warning("Database not connected. History unavailable.")
+        show_history(conn)
     
+    # Footer
     st.markdown("---")
     st.markdown(
         "<p style='text-align: center; color: gray;'>KineticScout v2.0 | NovoDyn Therapeutics</p>",
@@ -846,6 +809,250 @@ def show_dashboard(conn):
         st.info("No recent predictions")
 
 # ============================================
+# QUICK PREDICT
+# ============================================
+def show_quick_predict(conn, models, desc_names):
+    st.markdown("#### Enter a SMILES string")
+    
+    smiles_input = st.text_input("SMILES", placeholder="e.g., Cc1ccc(NC(=O)c2ccc(CN3CCN(C)CC3)cc2)cc1Nc1nccc(-c2cccnc2)n1", key="quick_predict_smiles")
+    compound_name = st.text_input("Compound Name (optional)", placeholder="e.g., Imatinib", key="quick_predict_name")
+    
+    save_single = st.checkbox("Save to database", value=True, key="quick_predict_save")
+    
+    with st.expander("Example Compounds"):
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("**Imatinib:**")
+            st.code("Cc1ccc(NC(=O)c2ccc(CN3CCN(C)CC3)cc2)cc1Nc1nccc(-c2cccnc2)n1", language=None)
+        with col2:
+            st.markdown("**Gefitinib:**")
+            st.code("COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN1CCOCC1", language=None)
+    
+    if st.button("Predict", type="primary", key="quick_predict_button"):
+        if not smiles_input:
+            st.error("Please enter a SMILES")
+        else:
+            preds = predict_all_targets(smiles_input, models, desc_names)
+            
+            if preds is None:
+                st.error("Invalid SMILES")
+            else:
+                st.markdown("---")
+                
+                col1, col2 = st.columns([1, 2])
+                with col1:
+                    mol = Chem.MolFromSmiles(smiles_input)
+                    img = Draw.MolToImage(mol, size=(300, 300))
+                    st.image(img, caption="Structure")
+                
+                with col2:
+                    st.markdown("### Predicted Residence Times")
+                    
+                    best, best_conf = get_best_target(preds)
+                    best_rt = preds[best]['rt']
+                    category = get_category(best_rt)
+                    confidence = int(best_conf * 100)
+                    
+                    for target in ['HSP90', 'AXL', 'EGFR']:
+                        rt = preds[target]['rt']
+                        conf = int(preds[target]['r2'] * 100)
+                        
+                        if target == best:
+                            st.success(f"**{target}**: {format_time(rt)} | Confidence: {conf}% | Best")
+                        else:
+                            st.info(f"**{target}**: {format_time(rt)} | Confidence: {conf}%")
+                    
+                    st.markdown("---")
+                    st.markdown(f"**Category:** {category}")
+                    
+                    if conn and save_single:
+                        mw = get_molecular_weight(smiles_input)
+                        name = compound_name if compound_name else f"Compound_{datetime.now().strftime('%H%M%S')}"
+                        db_compound_id = save_compound(conn, smiles_input, name, mw, "")
+                        if db_compound_id:
+                            pred_result = save_prediction(conn, db_compound_id, None,
+                                           float(preds['HSP90']['rt']), 
+                                           float(preds['AXL']['rt']), 
+                                           float(preds['EGFR']['rt']), 
+                                           best, category, confidence)
+                            if pred_result:
+                                st.success("Saved to database!")
+
+# ============================================
+# BATCH UPLOAD
+# ============================================
+def show_batch_upload(conn, models, desc_names):
+    st.markdown("#### Upload a CSV file with SMILES")
+    
+    if conn:
+        campaigns = get_all_campaigns(conn)
+        campaign_options = ["No Campaign (Quick Predict)"] + [f"{c['campaign_name']} (ID: {c['campaign_id']})" for c in campaigns]
+        selected_campaign = st.selectbox("Add to Campaign (optional)", campaign_options, key="batch_campaign_select")
+        
+        if selected_campaign != "No Campaign (Quick Predict)":
+            campaign_id = int(selected_campaign.split("ID: ")[1].rstrip(")"))
+        else:
+            campaign_id = None
+    else:
+        campaign_id = None
+    
+    template_df = pd.DataFrame({
+        'Compound_ID': ['Imatinib', 'Gefitinib', 'Erlotinib'],
+        'SMILES': [
+            'Cc1ccc(NC(=O)c2ccc(CN3CCN(C)CC3)cc2)cc1Nc1nccc(-c2cccnc2)n1',
+            'COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN1CCOCC1',
+            'COCCOc1cc2ncnc(Nc3cccc(C#C)c3)c2cc1OCCOC'
+        ],
+        'Original_Target': ['BCR-ABL', 'EGFR', 'EGFR'],
+        'MW': [493.6, 446.9, 393.4]
+    })
+    
+    st.download_button(
+        "Download Template CSV",
+        template_df.to_csv(index=False),
+        "kineticscout_template.csv",
+        "text/csv",
+        key="batch_download_template"
+    )
+    
+    uploaded_file = st.file_uploader("Upload CSV", type=['csv'], label_visibility="collapsed", key="batch_file_uploader")
+    
+    if uploaded_file is not None:
+        df = pd.read_csv(uploaded_file)
+        
+        smiles_col = None
+        for col in df.columns:
+            if 'smiles' in col.lower():
+                smiles_col = col
+                break
+        
+        if smiles_col is None:
+            st.error("No SMILES column found!")
+        else:
+            st.success(f"Loaded {len(df)} compounds")
+            
+            save_to_db = st.checkbox("Save predictions to database", value=True, key="batch_save_checkbox")
+            
+            if st.button("Predict All Targets", type="primary", key="batch_predict_button"):
+                results_list = []
+                progress = st.progress(0)
+                
+                for idx, row in df.iterrows():
+                    smiles = row[smiles_col]
+                    compound_id_name = row.get('Compound_ID', row.get('compound_id', f'Cpd_{idx+1}'))
+                    original_target = row.get('Original_Target', row.get('original_target', ''))
+                    
+                    preds = predict_all_targets(smiles, models, desc_names)
+                    
+                    if preds:
+                        best_target, best_conf = get_best_target(preds)
+                        best_rt = preds[best_target]['rt']
+                        category = get_category(best_rt)
+                        confidence = int(best_conf * 100)
+                        
+                        if conn and save_to_db:
+                            mw = get_molecular_weight(smiles)
+                            db_compound_id = save_compound(conn, smiles, str(compound_id_name), mw, str(original_target))
+                            if db_compound_id:
+                                save_prediction(conn, db_compound_id, campaign_id,
+                                               float(preds['HSP90']['rt']), 
+                                               float(preds['AXL']['rt']), 
+                                               float(preds['EGFR']['rt']), 
+                                               best_target, category, confidence)
+                                if campaign_id:
+                                    add_compound_to_campaign(conn, campaign_id, db_compound_id)
+                        
+                        results_list.append({
+                            'Compound': compound_id_name,
+                            'HSP90': format_time(preds['HSP90']['rt']),
+                            'AXL': format_time(preds['AXL']['rt']),
+                            'EGFR': format_time(preds['EGFR']['rt']),
+                            'Best Target': best_target,
+                            'Category': category,
+                            'Confidence': f"{confidence}%"
+                        })
+                    else:
+                        results_list.append({
+                            'Compound': compound_id_name,
+                            'HSP90': 'Error',
+                            'AXL': 'Error',
+                            'EGFR': 'Error',
+                            'Best Target': 'N/A',
+                            'Category': 'N/A',
+                            'Confidence': 'N/A'
+                        })
+                    
+                    progress.progress((idx + 1) / len(df))
+                
+                st.markdown("---")
+                st.markdown("### Results")
+                
+                results_df = pd.DataFrame(results_list)
+                
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("Total", len(results_df))
+                col2.metric("Long", len(results_df[results_df['Category'] == 'Long']))
+                col3.metric("Medium", len(results_df[results_df['Category'] == 'Medium']))
+                col4.metric("Short", len(results_df[results_df['Category'] == 'Short']))
+                
+                st.markdown("---")
+                st.dataframe(results_df, hide_index=True)
+                
+                if save_to_db and conn:
+                    st.success("Predictions saved to database!")
+                    if campaign_id:
+                        st.success("Compounds added to campaign!")
+                
+                st.download_button(
+                    "Download Results",
+                    results_df.to_csv(index=False),
+                    "kineticscout_results.csv",
+                    "text/csv",
+                    key="batch_download_results"
+                )
+
+# ============================================
+# HISTORY
+# ============================================
+def show_history(conn):
+    st.markdown("#### Prediction History")
+    
+    if conn:
+        history = get_prediction_history(conn)
+        
+        if history:
+            history_df = pd.DataFrame(history)
+            
+            history_df['HSP90'] = history_df['hsp90_tau_seconds'].apply(format_time)
+            history_df['AXL'] = history_df['axl_tau_seconds'].apply(format_time)
+            history_df['EGFR'] = history_df['egfr_tau_seconds'].apply(format_time)
+            history_df['Predicted'] = pd.to_datetime(history_df['predicted_at']).dt.strftime('%Y-%m-%d %H:%M')
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Total Predictions", len(history_df))
+            col2.metric("Long Residence", len(history_df[history_df['category'] == 'Long']))
+            col3.metric("Short Residence", len(history_df[history_df['category'] == 'Short']))
+            
+            st.markdown("---")
+            
+            display_df = history_df[['compound_name', 'HSP90', 'AXL', 'EGFR', 'best_target', 'category', 'confidence', 'Predicted']]
+            display_df.columns = ['Compound', 'HSP90', 'AXL', 'EGFR', 'Best Target', 'Category', 'Confidence', 'Predicted']
+            
+            st.dataframe(display_df, hide_index=True)
+            
+            st.download_button(
+                "Download History",
+                display_df.to_csv(index=False),
+                "kineticscout_history.csv",
+                "text/csv",
+                key="history_download_button"
+            )
+        else:
+            st.info("No predictions yet. Upload compounds to get started!")
+    else:
+        st.warning("Database not connected. History unavailable.")
+
+# ============================================
 # CAMPAIGN LIST VIEW
 # ============================================
 def show_campaign_list(conn, models, desc_names):
@@ -854,13 +1061,13 @@ def show_campaign_list(conn, models, desc_names):
     with st.expander("Create New Campaign", expanded=False):
         col1, col2 = st.columns(2)
         with col1:
-            new_name = st.text_input("Campaign Name", placeholder="e.g., EGFR Inhibitors Q1 2024")
+            new_name = st.text_input("Campaign Name", placeholder="e.g., EGFR Inhibitors Q1 2024", key="campaign_new_name")
         with col2:
-            new_target = st.selectbox("Target Protein", ["Multi-target", "HSP90", "AXL", "EGFR"])
+            new_target = st.selectbox("Target Protein", ["Multi-target", "HSP90", "AXL", "EGFR"], key="campaign_new_target")
         
-        new_description = st.text_area("Description (optional)", placeholder="Brief description of this campaign...")
+        new_description = st.text_area("Description (optional)", placeholder="Brief description of this campaign...", key="campaign_new_desc")
         
-        if st.button("Create Campaign", type="primary"):
+        if st.button("Create Campaign", type="primary", key="campaign_create_button"):
             if not new_name:
                 st.error("Please enter a campaign name")
             else:
@@ -890,12 +1097,12 @@ def show_campaign_list(conn, models, desc_names):
                         st.markdown(f"{status_color} {campaign['status']}")
                     
                     with col3:
-                        if st.button("Open", key=f"open_{campaign['campaign_id']}"):
+                        if st.button("Open", key=f"campaign_open_{campaign['campaign_id']}"):
                             st.session_state.current_campaign = campaign['campaign_id']
                             st.rerun()
                     
                     with col4:
-                        if st.button("Delete", key=f"delete_{campaign['campaign_id']}"):
+                        if st.button("Delete", key=f"campaign_delete_{campaign['campaign_id']}"):
                             if delete_campaign(conn, campaign['campaign_id']):
                                 st.success("Campaign deleted!")
                                 st.rerun()
@@ -918,7 +1125,7 @@ def show_campaign_detail(conn, models, desc_names):
         st.session_state.current_campaign = None
         return
     
-    if st.button("Back to Campaigns"):
+    if st.button("Back to Campaigns", key="campaign_back_button"):
         st.session_state.current_campaign = None
         st.session_state.view_mode = 'table'
         st.rerun()
@@ -939,7 +1146,7 @@ def show_campaign_detail(conn, models, desc_names):
     with col2:
         new_status = st.selectbox("Update Status", ["Active", "Paused", "Completed"], 
                                    index=["Active", "Paused", "Completed"].index(campaign['status']),
-                                   key="status_update")
+                                   key="campaign_status_select")
         if new_status != campaign['status']:
             if update_campaign_status(conn, campaign_id, new_status):
                 st.success(f"Status updated to {new_status}")
@@ -947,18 +1154,18 @@ def show_campaign_detail(conn, models, desc_names):
     
     col1, col2, col3 = st.columns([1, 1, 4])
     with col1:
-        if st.button("Table View", type="primary" if st.session_state.view_mode == 'table' else "secondary"):
+        if st.button("Table View", type="primary" if st.session_state.view_mode == 'table' else "secondary", key="campaign_table_view_button"):
             st.session_state.view_mode = 'table'
             st.rerun()
     with col2:
-        if st.button("Pipeline View", type="primary" if st.session_state.view_mode == 'pipeline' else "secondary"):
+        if st.button("Pipeline View", type="primary" if st.session_state.view_mode == 'pipeline' else "secondary", key="campaign_pipeline_view_button"):
             st.session_state.view_mode = 'pipeline'
             st.rerun()
     
     st.markdown("---")
     
     with st.expander("Add Compounds to Campaign"):
-        uploaded_file = st.file_uploader("Upload CSV with SMILES", type=['csv'], key=f"upload_{campaign_id}")
+        uploaded_file = st.file_uploader("Upload CSV with SMILES", type=['csv'], key=f"campaign_upload_{campaign_id}")
         
         if uploaded_file is not None:
             df = pd.read_csv(uploaded_file)
@@ -974,7 +1181,7 @@ def show_campaign_detail(conn, models, desc_names):
             else:
                 st.success(f"Found {len(df)} compounds")
                 
-                if st.button("Add and Predict", type="primary", key=f"predict_{campaign_id}"):
+                if st.button("Add and Predict", type="primary", key=f"campaign_predict_{campaign_id}"):
                     progress = st.progress(0)
                     added_count = 0
                     
@@ -1059,7 +1266,7 @@ def show_table_view(conn, campaign_id):
                         "Stage",
                         PIPELINE_STAGES,
                         index=PIPELINE_STAGES.index(current_stage),
-                        key=f"stage_{campaign_id}_{compound['compound_id']}_{idx}",
+                        key=f"table_stage_{campaign_id}_{compound['compound_id']}_{idx}",
                         label_visibility="collapsed"
                     )
                     if new_stage != current_stage:
@@ -1068,9 +1275,9 @@ def show_table_view(conn, campaign_id):
                 
                 with st.expander(f"Notes for {compound['compound_name']}", expanded=False):
                     current_notes = compound['notes'] if compound['notes'] else ""
-                    new_notes = st.text_area("Notes", value=current_notes, key=f"notes_{campaign_id}_{compound['compound_id']}_{idx}")
+                    new_notes = st.text_area("Notes", value=current_notes, key=f"table_notes_{campaign_id}_{compound['compound_id']}_{idx}")
                     if new_notes != current_notes:
-                        if st.button("Save Notes", key=f"save_notes_{campaign_id}_{compound['compound_id']}_{idx}"):
+                        if st.button("Save Notes", key=f"table_save_notes_{campaign_id}_{compound['compound_id']}_{idx}"):
                             if update_compound_notes(conn, campaign_id, compound['compound_id'], new_notes):
                                 st.success("Notes saved!")
                                 st.rerun()
@@ -1095,7 +1302,8 @@ def show_table_view(conn, campaign_id):
             "Download Campaign Data",
             compound_df.to_csv(index=False),
             f"campaign_{campaign_id}_compounds.csv",
-            "text/csv"
+            "text/csv",
+            key=f"table_download_{campaign_id}"
         )
     else:
         st.info("No compounds in this campaign yet. Add some above!")
@@ -1141,14 +1349,14 @@ def show_pipeline_view(conn, campaign_id):
                     
                     if i > 0:
                         with button_cols[0]:
-                            if st.button("<", key=f"left_{campaign_id}_{compound['compound_id']}_{stage}_{idx}"):
+                            if st.button("<", key=f"pipeline_left_{campaign_id}_{compound['compound_id']}_{stage}_{idx}"):
                                 new_stage = PIPELINE_STAGES[i - 1]
                                 if update_compound_stage(conn, campaign_id, compound['compound_id'], new_stage):
                                     st.rerun()
                     
                     if i < len(PIPELINE_STAGES) - 1:
                         with button_cols[1]:
-                            if st.button(">", key=f"right_{campaign_id}_{compound['compound_id']}_{stage}_{idx}"):
+                            if st.button(">", key=f"pipeline_right_{campaign_id}_{compound['compound_id']}_{stage}_{idx}"):
                                 new_stage = PIPELINE_STAGES[i + 1]
                                 if update_compound_stage(conn, campaign_id, compound['compound_id'], new_stage):
                                     st.rerun()
@@ -1165,6 +1373,15 @@ def show_pipeline_view(conn, campaign_id):
     col1.metric("Total Compounds", total)
     col2.metric("In Progress", in_progress)
     col3.metric("Advanced", advanced)
+
+# ============================================
+# MAIN ENTRY POINT
+# ============================================
+def main():
+    if not st.session_state.logged_in:
+        show_login_page()
+    else:
+        show_main_app()
 
 if __name__ == "__main__":
     main()
