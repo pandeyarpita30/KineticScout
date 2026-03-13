@@ -5,3 +5,5 @@ scikit-learn
 rdkit
 joblib
 psycopg2-binary
+requests
+pyrebase4
