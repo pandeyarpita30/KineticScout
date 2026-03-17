@@ -7,3 +7,4 @@ joblib
 psycopg2-binary
 requests
 pyrebase4
+plotly
