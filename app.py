@@ -5,7 +5,7 @@ import pandas as pd
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from rdkit import Chem
-from rdkit.Chem import Descriptors, Draw
+from rdkit.Chem import Descriptors, Draw, QED
 from rdkit.ML.Descriptors import MoleculeDescriptors
 from datetime import datetime
 import warnings
@@ -625,6 +625,51 @@ def get_molecular_weight(smiles):
     except:
         return None
 
+def calculate_admet_properties(smiles):
+    try:
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return None
+        
+        mw = float(Descriptors.MolWt(mol))
+        logp = float(Descriptors.MolLogP(mol))
+        tpsa = float(Descriptors.TPSA(mol))
+        hbd = int(Descriptors.NumHDonors(mol))
+        hba = int(Descriptors.NumHAcceptors(mol))
+        rotatable = int(Descriptors.NumRotatableBonds(mol))
+        rings = int(Descriptors.RingCount(mol))
+        
+        lipinski_violations = 0
+        if mw > 500:
+            lipinski_violations += 1
+        if logp > 5:
+            lipinski_violations += 1
+        if hbd > 5:
+            lipinski_violations += 1
+        if hba > 10:
+            lipinski_violations += 1
+        lipinski_pass = lipinski_violations == 0
+        
+        try:
+            qed_score = round(float(QED.qed(mol)), 3)
+        except:
+            qed_score = None
+        
+        return {
+            'molecular_weight': round(mw, 2),
+            'logp': round(logp, 2),
+            'tpsa': round(tpsa, 2),
+            'hbd': hbd,
+            'hba': hba,
+            'rotatable_bonds': rotatable,
+            'ring_count': rings,
+            'lipinski_violations': lipinski_violations,
+            'lipinski_pass': lipinski_pass,
+            'qed_score': qed_score
+        }
+    except:
+        return None
+
 def get_stage_color(stage):
     colors = {
         'Predicted': '🔵',
@@ -917,7 +962,32 @@ def show_quick_predict(conn, models, desc_names):
                     
                     st.markdown("---")
                     st.markdown(f"**Category:** {category}")
+                
+                # ADMET Drug Properties
+                admet = calculate_admet_properties(smiles_input)
+                if admet:
+                    st.markdown("---")
+                    st.markdown("### Drug Properties (ADMET)")
                     
+                    col_a, col_b, col_c, col_d = st.columns(4)
+                    col_a.metric("Molecular Weight", f"{admet['molecular_weight']} Da")
+                    col_b.metric("LogP", admet['logp'])
+                    col_c.metric("Polar Surface Area", f"{admet['tpsa']} A2")
+                    col_d.metric("Drug Likeness (QED)", admet['qed_score'] if admet['qed_score'] else "N/A")
+                    
+                    col_e, col_f, col_g, col_h = st.columns(4)
+                    col_e.metric("H Bond Donors", admet['hbd'])
+                    col_f.metric("H Bond Acceptors", admet['hba'])
+                    col_g.metric("Rotatable Bonds", admet['rotatable_bonds'])
+                    col_h.metric("Ring Count", admet['ring_count'])
+                    
+                    if admet['lipinski_pass']:
+                        st.success(f"Lipinski Rule of Five: PASS (0 violations)")
+                    else:
+                        st.warning(f"Lipinski Rule of Five: FAIL ({admet['lipinski_violations']} violations)")
+                
+                # Save to database
+                with col2:
                     if conn and save_single:
                         mw = get_molecular_weight(smiles_input)
                         name = compound_name if compound_name else f"Compound_{datetime.now().strftime('%H%M%S')}"
@@ -1015,6 +1085,8 @@ def show_batch_upload(conn, models, desc_names):
                                 if campaign_id:
                                     add_compound_to_campaign(conn, campaign_id, db_compound_id)
                         
+                        admet = calculate_admet_properties(smiles)
+                        
                         results_list.append({
                             'Compound': compound_id_name,
                             'HSP90': format_time(preds['HSP90']['rt']),
@@ -1022,7 +1094,14 @@ def show_batch_upload(conn, models, desc_names):
                             'EGFR': format_time(preds['EGFR']['rt']),
                             'Best Target': best_target,
                             'Category': category,
-                            'Confidence': f"{confidence}%"
+                            'Confidence': f"{confidence}%",
+                            'MW': admet['molecular_weight'] if admet else 'N/A',
+                            'LogP': admet['logp'] if admet else 'N/A',
+                            'TPSA': admet['tpsa'] if admet else 'N/A',
+                            'HBD': admet['hbd'] if admet else 'N/A',
+                            'HBA': admet['hba'] if admet else 'N/A',
+                            'QED': admet['qed_score'] if admet and admet['qed_score'] else 'N/A',
+                            'Lipinski': 'Pass' if admet and admet['lipinski_pass'] else 'Fail' if admet else 'N/A'
                         })
                     else:
                         results_list.append({
@@ -1032,7 +1111,14 @@ def show_batch_upload(conn, models, desc_names):
                             'EGFR': 'Error',
                             'Best Target': 'N/A',
                             'Category': 'N/A',
-                            'Confidence': 'N/A'
+                            'Confidence': 'N/A',
+                            'MW': 'N/A',
+                            'LogP': 'N/A',
+                            'TPSA': 'N/A',
+                            'HBD': 'N/A',
+                            'HBA': 'N/A',
+                            'QED': 'N/A',
+                            'Lipinski': 'N/A'
                         })
                     
                     progress.progress((idx + 1) / len(df))
