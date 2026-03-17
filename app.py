@@ -5,7 +5,7 @@ import pandas as pd
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from rdkit import Chem
-from rdkit.Chem import Descriptors, Draw, QED
+from rdkit.Chem import Descriptors, Draw, QED, AllChem, DataStructs
 from rdkit.ML.Descriptors import MoleculeDescriptors
 from datetime import datetime
 import warnings
@@ -670,6 +670,58 @@ def calculate_admet_properties(smiles):
     except:
         return None
 
+def find_similar_compounds(smiles_input, conn, top_n=5):
+    try:
+        mol_input = Chem.MolFromSmiles(smiles_input)
+        if mol_input is None:
+            return []
+        fp_input = AllChem.GetMorganFingerprintAsBitVect(mol_input, radius=2, nBits=2048)
+        
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            cursor.execute("""
+                SELECT DISTINCT ON (c.compound_id)
+                       c.compound_id, c.smiles, c.compound_name, 
+                       p.best_target, p.category, 
+                       p.hsp90_tau_seconds, p.axl_tau_seconds, p.egfr_tau_seconds
+                FROM compounds c
+                LEFT JOIN predictions p ON c.compound_id = p.compound_id
+                ORDER BY c.compound_id, p.predicted_at DESC
+            """)
+            all_compounds = cursor.fetchall()
+        except Exception as e:
+            return []
+        finally:
+            cursor.close()
+        
+        similarities = []
+        for comp in all_compounds:
+            if comp['smiles'] == smiles_input:
+                continue
+            try:
+                mol_comp = Chem.MolFromSmiles(comp['smiles'])
+                if mol_comp is None:
+                    continue
+                fp_comp = AllChem.GetMorganFingerprintAsBitVect(mol_comp, radius=2, nBits=2048)
+                similarity = DataStructs.TanimotoSimilarity(fp_input, fp_comp)
+                similarities.append({
+                    'compound_name': comp['compound_name'],
+                    'smiles': comp['smiles'],
+                    'similarity': round(similarity, 3),
+                    'best_target': comp['best_target'],
+                    'category': comp['category'],
+                    'hsp90_tau_seconds': comp['hsp90_tau_seconds'],
+                    'axl_tau_seconds': comp['axl_tau_seconds'],
+                    'egfr_tau_seconds': comp['egfr_tau_seconds']
+                })
+            except:
+                continue
+        
+        similarities.sort(key=lambda x: x['similarity'], reverse=True)
+        return similarities[:top_n]
+    except:
+        return []
+
 def get_stage_color(stage):
     colors = {
         'Predicted': '🔵',
@@ -985,6 +1037,40 @@ def show_quick_predict(conn, models, desc_names):
                         st.success(f"Lipinski Rule of Five: PASS (0 violations)")
                     else:
                         st.warning(f"Lipinski Rule of Five: FAIL ({admet['lipinski_violations']} violations)")
+                
+                # Similar Compounds
+                if conn:
+                    similar = find_similar_compounds(smiles_input, conn, top_n=5)
+                    if similar:
+                        st.markdown("---")
+                        st.markdown("### Similar Compounds in Database")
+                        
+                        for s_idx, sim in enumerate(similar):
+                            sim_category_color = "🟢" if sim['category'] == 'Long' else "🟡" if sim['category'] == 'Medium' else "🔴" if sim['category'] == 'Short' else "⚪"
+                            sim_pct = int(sim['similarity'] * 100)
+                            
+                            sc1, sc2, sc3, sc4 = st.columns([2, 1, 1, 1])
+                            
+                            with sc1:
+                                st.markdown(f"**{sim['compound_name']}** ({sim_pct}% similar)")
+                            
+                            with sc2:
+                                if sim['best_target']:
+                                    st.markdown(f"{sim_category_color} Best: {sim['best_target']}")
+                                else:
+                                    st.markdown("No prediction")
+                            
+                            with sc3:
+                                if sim['hsp90_tau_seconds']:
+                                    st.markdown(f"HSP90: {format_time(sim['hsp90_tau_seconds'])}")
+                                else:
+                                    st.markdown("HSP90: N/A")
+                            
+                            with sc4:
+                                if sim['category']:
+                                    st.markdown(f"Category: {sim['category']}")
+                                else:
+                                    st.markdown("Category: N/A")
                 
                 # Save to database
                 with col2:
