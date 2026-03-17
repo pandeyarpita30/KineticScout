@@ -10,6 +10,7 @@ from rdkit.ML.Descriptors import MoleculeDescriptors
 from datetime import datetime
 import warnings
 import pyrebase
+import plotly.graph_objects as go
 warnings.filterwarnings('ignore')
 
 # ============================================
@@ -1060,8 +1061,6 @@ def show_main_app():
 # DASHBOARD VIEW
 # ============================================
 def show_dashboard(conn):
-    st.markdown("#### Dashboard")
-    
     if not conn:
         st.warning("Database not connected")
         return
@@ -1072,79 +1071,143 @@ def show_dashboard(conn):
     target_dist = get_target_distribution(conn)
     campaign_summary = get_campaign_summary(conn)
     
-    # Overview metrics
-    st.markdown("### Overview")
-    col1, col2, col3, col4 = st.columns(4)
+    # Plotly dark theme layout
+    chart_layout = dict(
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='#ccc', size=13),
+        margin=dict(l=40, r=20, t=30, b=60),
+        height=300,
+        xaxis=dict(showgrid=False, tickfont=dict(size=11)),
+        yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.08)', tickfont=dict(size=11)),
+    )
     
+    # Overview metric cards
     if stats:
-        col1.metric("Active Campaigns", stats['active_campaigns'] or 0)
-        col2.metric("Total Compounds", stats['total_compounds'] or 0)
-        col3.metric("Total Predictions", stats['total_predictions'] or 0)
-        col4.metric("Total Campaigns", stats['total_campaigns'] or 0)
+        ac = stats['active_campaigns'] or 0
+        tc = stats['total_compounds'] or 0
+        tp = stats['total_predictions'] or 0
+        tcam = stats['total_campaigns'] or 0
+        
+        st.markdown(f"""
+        <div style="display: flex; gap: 16px; margin-bottom: 24px;">
+            <div style="flex:1; background: rgba(255,75,75,0.08); border: 1px solid rgba(255,75,75,0.2); border-radius: 12px; padding: 20px 24px;">
+                <div style="font-size: 0.8rem; color: #999; text-transform: uppercase; letter-spacing: 1px;">Active Campaigns</div>
+                <div style="font-size: 2.4rem; font-weight: 700; color: #ff4b4b; margin-top: 4px;">{ac}</div>
+            </div>
+            <div style="flex:1; background: rgba(75,150,255,0.08); border: 1px solid rgba(75,150,255,0.2); border-radius: 12px; padding: 20px 24px;">
+                <div style="font-size: 0.8rem; color: #999; text-transform: uppercase; letter-spacing: 1px;">Total Compounds</div>
+                <div style="font-size: 2.4rem; font-weight: 700; color: #4b96ff; margin-top: 4px;">{tc}</div>
+            </div>
+            <div style="flex:1; background: rgba(75,255,150,0.08); border: 1px solid rgba(75,255,150,0.2); border-radius: 12px; padding: 20px 24px;">
+                <div style="font-size: 0.8rem; color: #999; text-transform: uppercase; letter-spacing: 1px;">Total Predictions</div>
+                <div style="font-size: 2.4rem; font-weight: 700; color: #4bff96; margin-top: 4px;">{tp}</div>
+            </div>
+            <div style="flex:1; background: rgba(200,150,255,0.08); border: 1px solid rgba(200,150,255,0.2); border-radius: 12px; padding: 20px 24px;">
+                <div style="font-size: 0.8rem; color: #999; text-transform: uppercase; letter-spacing: 1px;">Total Campaigns</div>
+                <div style="font-size: 2.4rem; font-weight: 700; color: #c896ff; margin-top: 4px;">{tcam}</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
     
-    st.markdown("---")
-    
-    # Charts row
+    # Charts row 1: Pipeline and Category
     col1, col2 = st.columns(2)
     
     with col1:
-        st.markdown("### Pipeline Overview")
+        st.markdown("<div style='font-size:1.15rem; font-weight:600; margin-bottom:8px;'>Pipeline Overview</div>", unsafe_allow_html=True)
         if pipeline_stats:
-            pipeline_df = pd.DataFrame(pipeline_stats)
-            pipeline_df.columns = ['Stage', 'Count']
-            st.bar_chart(pipeline_df.set_index('Stage'))
+            stage_colors = {
+                'Predicted': '#4b96ff',
+                'To Synthesize': '#ffd54b',
+                'In Synthesis': '#ff9b4b',
+                'Testing': '#c84bff',
+                'Advanced': '#4bff96',
+                'Deprioritized': '#666666'
+            }
+            stages = [s['pipeline_stage'] for s in pipeline_stats]
+            counts = [s['count'] for s in pipeline_stats]
+            colors = [stage_colors.get(s, '#888') for s in stages]
+            
+            fig = go.Figure(data=[go.Bar(x=stages, y=counts, marker_color=colors, text=counts, textposition='outside', textfont=dict(size=13, color='#ccc'))])
+            fig.update_layout(**chart_layout)
+            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
         else:
             st.info("No compounds in pipeline yet")
     
     with col2:
-        st.markdown("### Category Breakdown")
+        st.markdown("<div style='font-size:1.15rem; font-weight:600; margin-bottom:8px;'>Category Breakdown</div>", unsafe_allow_html=True)
         if stats:
             long_count = stats['long_count'] or 0
             med_count = stats['medium_count'] or 0
             short_count = stats['short_count'] or 0
             total = long_count + med_count + short_count
             if total > 0:
-                category_df = pd.DataFrame({
-                    'Category': ['Long (>1 hr)', 'Medium (1 to 60 min)', 'Short (<1 min)'],
-                    'Count': [long_count, med_count, short_count]
-                })
-                st.bar_chart(category_df.set_index('Category'))
+                cats = ['Long (>1 hr)', 'Medium (1 to 60 min)', 'Short (<1 min)']
+                vals = [long_count, med_count, short_count]
+                cat_colors = ['#4bff96', '#ffd54b', '#ff4b4b']
+                
+                fig = go.Figure(data=[go.Bar(x=cats, y=vals, marker_color=cat_colors, text=vals, textposition='outside', textfont=dict(size=13, color='#ccc'))])
+                fig.update_layout(**chart_layout)
+                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
             else:
                 st.info("No predictions yet")
     
-    st.markdown("---")
-    
-    # Target distribution and campaign summary
+    # Charts row 2: Target distribution and Campaign summary
     col1, col2 = st.columns(2)
     
     with col1:
-        st.markdown("### Best Target Distribution")
+        st.markdown("<div style='font-size:1.15rem; font-weight:600; margin-bottom:8px;'>Best Target Distribution</div>", unsafe_allow_html=True)
         if target_dist:
-            target_df = pd.DataFrame(target_dist)
-            target_df.columns = ['Target', 'Count']
-            st.bar_chart(target_df.set_index('Target'))
+            target_colors = ['#ff4b4b', '#4b96ff', '#ffd54b', '#4bff96', '#c84bff', '#ff9b4b']
+            targets = [t['best_target'] for t in target_dist]
+            counts = [t['count'] for t in target_dist]
+            colors = target_colors[:len(targets)]
+            
+            fig = go.Figure(data=[go.Bar(x=targets, y=counts, marker_color=colors, text=counts, textposition='outside', textfont=dict(size=13, color='#ccc'))])
+            fig.update_layout(**chart_layout)
+            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
         else:
             st.info("No predictions yet")
     
     with col2:
-        st.markdown("### Campaign Summary")
+        st.markdown("<div style='font-size:1.15rem; font-weight:600; margin-bottom:8px;'>Campaign Summary</div>", unsafe_allow_html=True)
         if campaign_summary:
             for camp in campaign_summary:
-                status_color = "🟢" if camp['status'] == 'Active' else "🟡" if camp['status'] == 'Paused' else "⚫"
-                st.markdown(f"{status_color} **{camp['campaign_name']}**: {camp['compound_count'] or 0} compounds, {camp['advanced_count'] or 0} advanced")
+                status_color = "#4bff96" if camp['status'] == 'Active' else "#ffd54b" if camp['status'] == 'Paused' else "#666"
+                compound_count = camp['compound_count'] or 0
+                advanced_count = camp['advanced_count'] or 0
+                st.markdown(f"""
+                <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 12px 16px; margin-bottom: 10px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <span style="font-weight: 600; font-size: 0.95rem;">{camp['campaign_name']}</span>
+                            <span style="margin-left: 10px; font-size: 0.75rem; color: {status_color}; border: 1px solid {status_color}; border-radius: 10px; padding: 2px 8px;">{camp['status']}</span>
+                        </div>
+                        <div style="font-size: 0.82rem; color: #aaa;">{compound_count} compounds &middot; {advanced_count} advanced</div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
         else:
             st.info("No campaigns yet")
     
-    st.markdown("---")
+    st.markdown("")
     
     # Recent predictions
-    st.markdown("### Recent Predictions")
+    st.markdown("<div style='font-size:1.15rem; font-weight:600; margin-bottom:12px;'>Recent Predictions</div>", unsafe_allow_html=True)
     if recent:
         for pred in recent:
             time_str = time_ago(pred['predicted_at'])
             campaign_str = f" in {pred['campaign_name']}" if pred['campaign_name'] else ""
-            category_color = "🟢" if pred['category'] == 'Long' else "🟡" if pred['category'] == 'Medium' else "🔴"
-            st.markdown(f"{category_color} **{pred['compound_name']}** | {pred['best_target']} ({pred['category']}){campaign_str} | {time_str}")
+            cat = pred['category']
+            cat_color = "#4bff96" if cat == 'Long' else "#ffd54b" if cat == 'Medium' else "#ff4b4b"
+            st.markdown(f"""
+            <div style="display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.05);">
+                <span style="width: 8px; height: 8px; border-radius: 50%; background: {cat_color}; display: inline-block;"></span>
+                <span style="font-weight: 500;">{pred['compound_name']}</span>
+                <span style="color: #888; font-size: 0.85rem;">{pred['best_target']} ({cat}){campaign_str}</span>
+                <span style="color: #666; font-size: 0.78rem; margin-left: auto;">{time_str}</span>
+            </div>
+            """, unsafe_allow_html=True)
     else:
         st.info("No recent predictions")
 
