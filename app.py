@@ -22,6 +22,132 @@ st.set_page_config(
 )
 
 # ============================================
+# CUSTOM CSS STYLING
+# ============================================
+st.markdown("""
+<style>
+    /* Metric card styling */
+    [data-testid="stMetricValue"] {
+        font-size: 1.8rem;
+        font-weight: 700;
+    }
+    [data-testid="stMetricLabel"] {
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    
+    /* Section spacing */
+    .block-container {
+        padding-top: 2rem;
+    }
+    
+    /* Tab styling */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        padding: 8px 20px;
+        font-size: 0.9rem;
+    }
+    
+    /* Sidebar styling */
+    [data-testid="stSidebar"] {
+        padding-top: 1rem;
+    }
+    [data-testid="stSidebar"] .block-container {
+        padding-top: 1rem;
+    }
+    
+    /* Better table styling */
+    .stDataFrame {
+        border-radius: 8px;
+    }
+    
+    /* Login page hero */
+    .login-hero {
+        text-align: center;
+        padding: 2rem 1rem;
+        margin-bottom: 1rem;
+    }
+    .login-hero h1 {
+        font-size: 2.8rem;
+        margin-bottom: 0.3rem;
+    }
+    .login-hero .subtitle {
+        font-size: 1.2rem;
+        color: #aab;
+        margin-bottom: 0.5rem;
+    }
+    .login-hero .company {
+        font-size: 0.95rem;
+        color: #889;
+    }
+    
+    /* Feature pills on login */
+    .feature-row {
+        display: flex;
+        justify-content: center;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-top: 1rem;
+        margin-bottom: 1.5rem;
+    }
+    .feature-pill {
+        background: rgba(255,75,75,0.1);
+        border: 1px solid rgba(255,75,75,0.25);
+        border-radius: 20px;
+        padding: 6px 16px;
+        font-size: 0.82rem;
+        color: #ddd;
+    }
+    
+    /* Sidebar about section */
+    .sidebar-brand {
+        text-align: center;
+        padding: 0.5rem 0;
+        margin-bottom: 0.5rem;
+    }
+    .sidebar-brand h2 {
+        font-size: 1.3rem;
+        margin-bottom: 0.1rem;
+    }
+    .sidebar-brand p {
+        font-size: 0.75rem;
+        color: #999;
+        margin: 0;
+    }
+    .sidebar-team {
+        font-size: 0.78rem;
+        color: #aaa;
+        line-height: 1.7;
+    }
+    .sidebar-team strong {
+        color: #ccc;
+    }
+    
+    /* Dashboard chart containers */
+    .chart-header {
+        font-size: 1rem;
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+    }
+    
+    /* Benchmark card styling */
+    .bench-seekrflow {
+        border-left: 3px solid #4CAF50;
+        padding-left: 12px;
+        margin-bottom: 0.5rem;
+    }
+    .bench-literature {
+        border-left: 3px solid #2196F3;
+        padding-left: 12px;
+        margin-bottom: 0.5rem;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ============================================
 # SESSION STATE INITIALIZATION
 # ============================================
 if 'logged_in' not in st.session_state:
@@ -755,11 +881,27 @@ def time_ago(dt):
 # LOGIN PAGE
 # ============================================
 def show_login_page():
-    st.title("🎯 KineticScout")
-    st.markdown("### Multi-Target Drug Residence Time Prediction")
+    st.markdown("")
+    
+    # Hero section
+    st.markdown("""
+    <div class="login-hero">
+        <h1>🎯 KineticScout</h1>
+        <div class="subtitle">Multi-Target Drug Residence Time Prediction Platform</div>
+        <div class="company">by NovoDyn Therapeutics | novodyn.ai</div>
+        <div class="feature-row">
+            <span class="feature-pill">Binding Kinetics (kon, koff)</span>
+            <span class="feature-pill">Residence Time Prediction</span>
+            <span class="feature-pill">Campaign Management</span>
+            <span class="feature-pill">Drug Properties (ADMET)</span>
+            <span class="feature-pill">40+ Validated Compounds</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
     st.markdown("---")
     
-    col1, col2, col3 = st.columns([1, 2, 1])
+    col1, col2, col3 = st.columns([1, 1.5, 1])
     
     with col2:
         st.markdown("#### Welcome! Please login or sign up.")
@@ -802,22 +944,67 @@ def show_login_page():
                         st.error(error)
             else:
                 st.error("Please enter email and password")
-        
-        st.markdown("---")
-        st.markdown("<p style='text-align: center; color: gray;'>KineticScout v2.0 | NovoDyn Therapeutics</p>", unsafe_allow_html=True)
+    
+    st.markdown("")
+    st.markdown("")
+    st.markdown("""
+    <div style="text-align: center; color: #666; font-size: 0.8rem; padding: 1rem;">
+        Predicting drug binding kinetics across HSP90, AXL, EGFR, TTK, Trypsin, and more.<br>
+        Physics based validation at 97% accuracy (R&sup2;) on HSP90 via seekrflow multiscale simulations.<br>
+        Backed by 20+ peer reviewed publications.
+    </div>
+    """, unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: gray; font-size: 0.75rem;'>KineticScout v2.0 | NovoDyn Therapeutics</p>", unsafe_allow_html=True)
 
 # ============================================
 # MAIN APP (After Login)
 # ============================================
 def show_main_app():
-    # Sidebar with user info and logout
+    # Sidebar with branding, user info, and about
     with st.sidebar:
+        # Brand header
+        st.markdown("""
+        <div class="sidebar-brand">
+            <h2>🎯 NovoDyn</h2>
+            <p>Accelerating drug discovery through<br>binding kinetics prediction</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("---")
+        
+        # User info
         st.markdown(f"**Logged in as:**")
         st.markdown(f"{st.session_state.user_email}")
-        st.markdown("---")
+        
         if st.button("Logout", key="sidebar_logout_button", use_container_width=True):
             logout_user()
             st.rerun()
+        
+        st.markdown("---")
+        
+        # Team section
+        st.markdown("**Our Team**")
+        st.markdown("""
+        <div class="sidebar-team">
+            <strong>Rommie E. Amaro, Ph.D.</strong><br>Chief Scientific Officer<br>
+            Distinguished Professor, UC San Diego<br><br>
+            <strong>Arpita Pandey</strong><br>Chief Executive Officer<br>
+            MBA, UC Berkeley<br><br>
+            <strong>Anupam Anand Ojha, Ph.D.</strong><br>Chief Technical Officer<br>
+            Research Fellow, Flatiron Institute
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("---")
+        
+        # Links and info
+        st.markdown("""
+        <div class="sidebar-team">
+            🌐 <a href="https://novodyn.ai" style="color: #ff4b4b;">novodyn.ai</a><br>
+            📚 20+ peer reviewed publications<br>
+            🔬 seekrflow validated predictions
+        </div>
+        """, unsafe_allow_html=True)
     
     # Header
     st.title("🎯 KineticScout")
@@ -885,6 +1072,7 @@ def show_dashboard(conn):
     target_dist = get_target_distribution(conn)
     campaign_summary = get_campaign_summary(conn)
     
+    # Overview metrics
     st.markdown("### Overview")
     col1, col2, col3, col4 = st.columns(4)
     
@@ -896,16 +1084,15 @@ def show_dashboard(conn):
     
     st.markdown("---")
     
+    # Charts row
     col1, col2 = st.columns(2)
     
     with col1:
         st.markdown("### Pipeline Overview")
         if pipeline_stats:
-            for stage_data in pipeline_stats:
-                stage = stage_data['pipeline_stage']
-                count = stage_data['count']
-                color = get_stage_color(stage)
-                st.markdown(f"{color} **{stage}**: {count} compounds")
+            pipeline_df = pd.DataFrame(pipeline_stats)
+            pipeline_df.columns = ['Stage', 'Count']
+            st.bar_chart(pipeline_df.set_index('Stage'))
         else:
             st.info("No compounds in pipeline yet")
     
@@ -917,23 +1104,25 @@ def show_dashboard(conn):
             short_count = stats['short_count'] or 0
             total = long_count + med_count + short_count
             if total > 0:
-                st.markdown(f"🟢 **Long** (>1 hr): {long_count} ({100 * long_count // total}%)")
-                st.markdown(f"🟡 **Medium** (1 to 60 min): {med_count} ({100 * med_count // total}%)")
-                st.markdown(f"🔴 **Short** (<1 min): {short_count} ({100 * short_count // total}%)")
+                category_df = pd.DataFrame({
+                    'Category': ['Long (>1 hr)', 'Medium (1 to 60 min)', 'Short (<1 min)'],
+                    'Count': [long_count, med_count, short_count]
+                })
+                st.bar_chart(category_df.set_index('Category'))
             else:
                 st.info("No predictions yet")
     
     st.markdown("---")
     
+    # Target distribution and campaign summary
     col1, col2 = st.columns(2)
     
     with col1:
         st.markdown("### Best Target Distribution")
         if target_dist:
-            for target_data in target_dist:
-                target = target_data['best_target']
-                count = target_data['count']
-                st.markdown(f"**{target}**: {count} compounds")
+            target_df = pd.DataFrame(target_dist)
+            target_df.columns = ['Target', 'Count']
+            st.bar_chart(target_df.set_index('Target'))
         else:
             st.info("No predictions yet")
     
@@ -948,6 +1137,7 @@ def show_dashboard(conn):
     
     st.markdown("---")
     
+    # Recent predictions
     st.markdown("### Recent Predictions")
     if recent:
         for pred in recent:
@@ -1328,8 +1518,10 @@ def show_benchmark_library(conn):
     # Display each compound
     for idx, comp in enumerate(compounds):
         method_badge = "🔬 seekrflow" if comp['prediction_method'] == 'seekrflow' else "📚 Literature"
+        card_class = "bench-seekrflow" if comp['prediction_method'] == 'seekrflow' else "bench-literature"
         
         with st.container():
+            st.markdown(f'<div class="{card_class}">', unsafe_allow_html=True)
             col1, col2 = st.columns([1, 3])
             
             with col1:
@@ -1343,7 +1535,6 @@ def show_benchmark_library(conn):
             
             with col2:
                 if comp['prediction_method'] == 'seekrflow':
-                    # Show predicted vs experimental side by side
                     c1, c2, c3 = st.columns(3)
                     
                     with c1:
@@ -1368,7 +1559,6 @@ def show_benchmark_library(conn):
                             st.markdown(f"Spearman: {comp['spearman_correlation']}")
                 
                 else:
-                    # Literature reference - only experimental values
                     c1, c2 = st.columns(2)
                     
                     with c1:
@@ -1383,6 +1573,7 @@ def show_benchmark_library(conn):
                         if comp['source']:
                             st.markdown(f"{comp['source']}")
             
+            st.markdown('</div>', unsafe_allow_html=True)
             st.markdown("---")
     
     # Download button for benchmark data
