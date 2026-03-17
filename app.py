@@ -261,6 +261,55 @@ def get_campaign_summary(conn):
         cursor.close()
 
 # ============================================
+# DATABASE FUNCTIONS - BENCHMARK LIBRARY
+# ============================================
+def get_benchmark_compounds(conn, target_filter=None, method_filter=None):
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        query = "SELECT * FROM benchmark_kinetics WHERE 1=1"
+        params = []
+        if target_filter and target_filter != "All Targets":
+            query += " AND target_protein = %s"
+            params.append(target_filter)
+        if method_filter and method_filter != "All Methods":
+            query += " AND prediction_method = %s"
+            params.append(method_filter)
+        query += " ORDER BY target_protein, compound_name"
+        cursor.execute(query, params)
+        return cursor.fetchall()
+    except Exception as e:
+        return []
+    finally:
+        cursor.close()
+
+def get_benchmark_targets(conn):
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cursor.execute("SELECT DISTINCT target_protein FROM benchmark_kinetics ORDER BY target_protein")
+        return [row['target_protein'] for row in cursor.fetchall()]
+    except Exception as e:
+        return []
+    finally:
+        cursor.close()
+
+def get_benchmark_stats(conn):
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cursor.execute("""
+            SELECT 
+                COUNT(*) as total_compounds,
+                COUNT(DISTINCT target_protein) as total_targets,
+                COUNT(CASE WHEN prediction_method = 'seekrflow' THEN 1 END) as seekrflow_count,
+                COUNT(CASE WHEN prediction_method = 'experimental' THEN 1 END) as experimental_count
+            FROM benchmark_kinetics
+        """)
+        return cursor.fetchone()
+    except Exception as e:
+        return None
+    finally:
+        cursor.close()
+
+# ============================================
 # DATABASE FUNCTIONS - COMPOUNDS & PREDICTIONS
 # ============================================
 def save_compound(conn, smiles, compound_name, molecular_weight, original_target):
@@ -683,8 +732,8 @@ def show_main_app():
     desc_names = load_descriptors()
     conn = get_db_connection()
     
-    # Tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Dashboard", "📁 Campaigns", "🔬 Quick Predict", "📊 Batch Upload", "📜 History"])
+    # Tabs - now 6 tabs with Benchmark Library added
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📈 Dashboard", "📁 Campaigns", "🔬 Quick Predict", "📊 Batch Upload", "📜 History", "🧪 Benchmark Library"])
     
     # TAB 1: DASHBOARD
     with tab1:
@@ -708,6 +757,10 @@ def show_main_app():
     # TAB 5: HISTORY
     with tab5:
         show_history(conn)
+    
+    # TAB 6: BENCHMARK LIBRARY
+    with tab6:
+        show_benchmark_library(conn)
     
     # Footer
     st.markdown("---")
@@ -1051,6 +1104,139 @@ def show_history(conn):
             st.info("No predictions yet. Upload compounds to get started!")
     else:
         st.warning("Database not connected. History unavailable.")
+
+# ============================================
+# BENCHMARK LIBRARY
+# ============================================
+def show_benchmark_library(conn):
+    st.markdown("#### Benchmark Library")
+    st.markdown("Physics based kinetic predictions validated against experimental measurements. "
+                "Data from seekrflow multiscale milestoning simulations (Ojha et al. 2026) "
+                "and published experimental kinetics studies.")
+    
+    if not conn:
+        st.warning("Database not connected")
+        return
+    
+    # Get stats
+    bench_stats = get_benchmark_stats(conn)
+    if bench_stats:
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Total Compounds", bench_stats['total_compounds'] or 0)
+        col2.metric("Targets Covered", bench_stats['total_targets'] or 0)
+        col3.metric("seekrflow Validated", bench_stats['seekrflow_count'] or 0)
+        col4.metric("Literature Reference", bench_stats['experimental_count'] or 0)
+    
+    st.markdown("---")
+    
+    # Filters
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        targets = get_benchmark_targets(conn)
+        target_options = ["All Targets"] + targets
+        selected_target = st.selectbox("Filter by Target", target_options, key="bench_target_filter")
+    
+    with col2:
+        method_options = ["All Methods", "seekrflow", "experimental"]
+        selected_method = st.selectbox("Filter by Method", method_options, key="bench_method_filter")
+    
+    st.markdown("---")
+    
+    # Get filtered compounds
+    compounds = get_benchmark_compounds(conn, selected_target, selected_method)
+    
+    if not compounds:
+        st.info("No compounds found with the selected filters.")
+        return
+    
+    st.markdown(f"### Showing {len(compounds)} compounds")
+    st.markdown("")
+    
+    # Display each compound
+    for idx, comp in enumerate(compounds):
+        method_badge = "🔬 seekrflow" if comp['prediction_method'] == 'seekrflow' else "📚 Literature"
+        
+        with st.container():
+            col1, col2 = st.columns([1, 3])
+            
+            with col1:
+                st.markdown(f"**{comp['compound_name']}**")
+                st.caption(f"Target: {comp['target_protein']}")
+                st.caption(f"Method: {method_badge}")
+                if comp['scaffold_class']:
+                    st.caption(f"Scaffold: {comp['scaffold_class']}")
+                if comp['binding_conformation']:
+                    st.caption(f"Conformation: {comp['binding_conformation']}")
+            
+            with col2:
+                if comp['prediction_method'] == 'seekrflow':
+                    # Show predicted vs experimental side by side
+                    c1, c2, c3 = st.columns(3)
+                    
+                    with c1:
+                        st.markdown("**Predicted (seekrflow)**")
+                        if comp['theoretical_koff'] is not None:
+                            st.markdown(f"koff: {comp['theoretical_koff']:.4g} per second")
+                        if comp['theoretical_residence_time_seconds'] is not None:
+                            st.markdown(f"Residence time: {format_time(comp['theoretical_residence_time_seconds'])}")
+                    
+                    with c2:
+                        st.markdown("**Experimental**")
+                        if comp['experimental_koff'] is not None:
+                            st.markdown(f"koff: {comp['experimental_koff']:.4g} per second")
+                        if comp['experimental_residence_time_seconds'] is not None:
+                            st.markdown(f"Residence time: {format_time(comp['experimental_residence_time_seconds'])}")
+                    
+                    with c3:
+                        st.markdown("**Accuracy**")
+                        if comp['r_squared'] is not None:
+                            st.markdown(f"R squared: {comp['r_squared']}")
+                        if comp['spearman_correlation'] is not None:
+                            st.markdown(f"Spearman: {comp['spearman_correlation']}")
+                
+                else:
+                    # Literature reference - only experimental values
+                    c1, c2 = st.columns(2)
+                    
+                    with c1:
+                        st.markdown("**Experimental Values**")
+                        if comp['experimental_koff'] is not None:
+                            st.markdown(f"koff: {comp['experimental_koff']:.4g} per second")
+                        if comp['experimental_residence_time_seconds'] is not None:
+                            st.markdown(f"Residence time: {format_time(comp['experimental_residence_time_seconds'])}")
+                    
+                    with c2:
+                        st.markdown("**Source**")
+                        if comp['source']:
+                            st.markdown(f"{comp['source']}")
+            
+            st.markdown("---")
+    
+    # Download button for benchmark data
+    bench_data = []
+    for comp in compounds:
+        bench_data.append({
+            'Compound': comp['compound_name'],
+            'Target': comp['target_protein'],
+            'Method': comp['prediction_method'],
+            'Scaffold': comp['scaffold_class'] if comp['scaffold_class'] else '',
+            'Predicted koff (per second)': comp['theoretical_koff'] if comp['theoretical_koff'] else '',
+            'Experimental koff (per second)': comp['experimental_koff'] if comp['experimental_koff'] else '',
+            'Predicted Residence Time': format_time(comp['theoretical_residence_time_seconds']) if comp['theoretical_residence_time_seconds'] else '',
+            'Experimental Residence Time': format_time(comp['experimental_residence_time_seconds']) if comp['experimental_residence_time_seconds'] else '',
+            'R squared': comp['r_squared'] if comp['r_squared'] else '',
+            'Source': comp['source'] if comp['source'] else ''
+        })
+    
+    bench_df = pd.DataFrame(bench_data)
+    st.download_button(
+        "Download Benchmark Data",
+        bench_df.to_csv(index=False),
+        "kineticscout_benchmark_library.csv",
+        "text/csv",
+        key="bench_download_button"
+    )
 
 # ============================================
 # CAMPAIGN LIST VIEW
