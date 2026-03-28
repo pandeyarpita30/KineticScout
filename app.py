@@ -1015,37 +1015,54 @@ def show_main_app():
     # Load resources
     models = load_models()
     desc_names = load_descriptors()
-    conn = get_db_connection()
     
     # Tabs - now 6 tabs with Benchmark Library added
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📈 Dashboard", "📁 Campaigns", "🔬 Quick Predict", "📊 Batch Upload", "📜 History", "🧪 Benchmark Library"])
     
     # TAB 1: DASHBOARD
     with tab1:
-        show_dashboard(conn)
+        conn1 = get_db_connection()
+        show_dashboard(conn1)
+        if conn1:
+            conn1.close()
     
     # TAB 2: CAMPAIGNS
     with tab2:
+        conn2 = get_db_connection()
         if st.session_state.current_campaign is None:
-            show_campaign_list(conn, models, desc_names)
+            show_campaign_list(conn2, models, desc_names)
         else:
-            show_campaign_detail(conn, models, desc_names)
+            show_campaign_detail(conn2, models, desc_names)
+        if conn2:
+            conn2.close()
     
     # TAB 3: QUICK PREDICT
     with tab3:
-        show_quick_predict(conn, models, desc_names)
+        conn3 = get_db_connection()
+        show_quick_predict(conn3, models, desc_names)
+        if conn3:
+            conn3.close()
     
     # TAB 4: BATCH UPLOAD
     with tab4:
-        show_batch_upload(conn, models, desc_names)
+        conn4 = get_db_connection()
+        show_batch_upload(conn4, models, desc_names)
+        if conn4:
+            conn4.close()
     
     # TAB 5: HISTORY
     with tab5:
-        show_history(conn)
+        conn5 = get_db_connection()
+        show_history(conn5)
+        if conn5:
+            conn5.close()
     
     # TAB 6: BENCHMARK LIBRARY
     with tab6:
-        show_benchmark_library(conn)
+        conn6 = get_db_connection()
+        show_benchmark_library(conn6)
+        if conn6:
+            conn6.close()
     
     # Footer
     st.markdown("---")
@@ -1053,9 +1070,6 @@ def show_main_app():
         "<p style='text-align: center; color: gray;'>KineticScout v2.0 | NovoDyn Therapeutics</p>",
         unsafe_allow_html=True
     )
-    
-    if conn:
-        conn.close()
 
 # ============================================
 # DASHBOARD VIEW
@@ -1215,7 +1229,8 @@ def show_dashboard(conn):
 # QUICK PREDICT
 # ============================================
 def show_quick_predict(conn, models, desc_names):
-    st.markdown("#### Enter a SMILES string")
+    st.markdown("<div style='font-size:1.4rem; font-weight:700; margin-bottom:16px;'>Quick Predict</div>", unsafe_allow_html=True)
+    st.markdown("<div style='font-size:0.9rem; color:#aaa; margin-bottom:16px;'>Enter a SMILES string to predict residence time across multiple targets.</div>", unsafe_allow_html=True)
     
     smiles_input = st.text_input("SMILES", placeholder="e.g., Cc1ccc(NC(=O)c2ccc(CN3CCN(C)CC3)cc2)cc1Nc1nccc(-c2cccnc2)n1", key="quick_predict_smiles")
     compound_name = st.text_input("Compound Name (optional)", placeholder="e.g., Imatinib", key="quick_predict_name")
@@ -1344,7 +1359,8 @@ def show_quick_predict(conn, models, desc_names):
 # BATCH UPLOAD
 # ============================================
 def show_batch_upload(conn, models, desc_names):
-    st.markdown("#### Upload a CSV file with SMILES")
+    st.markdown("<div style='font-size:1.4rem; font-weight:700; margin-bottom:16px;'>Batch Upload</div>", unsafe_allow_html=True)
+    st.markdown("<div style='font-size:0.9rem; color:#aaa; margin-bottom:16px;'>Upload a CSV file with SMILES to predict residence times for multiple compounds at once.</div>", unsafe_allow_html=True)
     
     if conn:
         campaigns = get_all_campaigns(conn)
@@ -1462,19 +1478,38 @@ def show_batch_upload(conn, models, desc_names):
                     
                     progress.progress((idx + 1) / len(df))
                 
-                st.markdown("---")
-                st.markdown("### Results")
+                st.markdown("")
+                st.markdown("<div style='font-size:1.15rem; font-weight:600; margin-bottom:12px;'>Results</div>", unsafe_allow_html=True)
                 
                 results_df = pd.DataFrame(results_list)
                 
-                col1, col2, col3, col4 = st.columns(4)
-                col1.metric("Total", len(results_df))
-                col2.metric("Long", len(results_df[results_df['Category'] == 'Long']))
-                col3.metric("Medium", len(results_df[results_df['Category'] == 'Medium']))
-                col4.metric("Short", len(results_df[results_df['Category'] == 'Short']))
+                total_r = len(results_df)
+                long_r = len(results_df[results_df['Category'] == 'Long'])
+                med_r = len(results_df[results_df['Category'] == 'Medium'])
+                short_r = len(results_df[results_df['Category'] == 'Short'])
                 
-                st.markdown("---")
-                st.dataframe(results_df, hide_index=True)
+                st.markdown(f"""
+                <div style="display: flex; gap: 12px; margin-bottom: 16px;">
+                    <div style="flex:1; background: rgba(75,150,255,0.08); border: 1px solid rgba(75,150,255,0.2); border-radius: 10px; padding: 12px 16px;">
+                        <div style="font-size: 0.75rem; color: #999; text-transform: uppercase;">Total</div>
+                        <div style="font-size: 1.6rem; font-weight: 700; color: #4b96ff;">{total_r}</div>
+                    </div>
+                    <div style="flex:1; background: rgba(75,255,150,0.08); border: 1px solid rgba(75,255,150,0.2); border-radius: 10px; padding: 12px 16px;">
+                        <div style="font-size: 0.75rem; color: #999; text-transform: uppercase;">Long</div>
+                        <div style="font-size: 1.6rem; font-weight: 700; color: #4bff96;">{long_r}</div>
+                    </div>
+                    <div style="flex:1; background: rgba(255,213,75,0.08); border: 1px solid rgba(255,213,75,0.2); border-radius: 10px; padding: 12px 16px;">
+                        <div style="font-size: 0.75rem; color: #999; text-transform: uppercase;">Medium</div>
+                        <div style="font-size: 1.6rem; font-weight: 700; color: #ffd54b;">{med_r}</div>
+                    </div>
+                    <div style="flex:1; background: rgba(255,75,75,0.08); border: 1px solid rgba(255,75,75,0.2); border-radius: 10px; padding: 12px 16px;">
+                        <div style="font-size: 0.75rem; color: #999; text-transform: uppercase;">Short</div>
+                        <div style="font-size: 1.6rem; font-weight: 700; color: #ff4b4b;">{short_r}</div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                st.dataframe(results_df, hide_index=True, use_container_width=True)
                 
                 if save_to_db and conn:
                     st.success("Predictions saved to database!")
@@ -1493,7 +1528,7 @@ def show_batch_upload(conn, models, desc_names):
 # HISTORY
 # ============================================
 def show_history(conn):
-    st.markdown("#### Prediction History")
+    st.markdown("<div style='font-size:1.4rem; font-weight:700; margin-bottom:16px;'>Prediction History</div>", unsafe_allow_html=True)
     
     if conn:
         history = get_prediction_history(conn)
@@ -1506,17 +1541,31 @@ def show_history(conn):
             history_df['EGFR'] = history_df['egfr_tau_seconds'].apply(format_time)
             history_df['Predicted'] = pd.to_datetime(history_df['predicted_at']).dt.strftime('%Y-%m-%d %H:%M')
             
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Total Predictions", len(history_df))
-            col2.metric("Long Residence", len(history_df[history_df['category'] == 'Long']))
-            col3.metric("Short Residence", len(history_df[history_df['category'] == 'Short']))
+            total_preds = len(history_df)
+            long_res = len(history_df[history_df['category'] == 'Long'])
+            short_res = len(history_df[history_df['category'] == 'Short'])
             
-            st.markdown("---")
+            st.markdown(f"""
+            <div style="display: flex; gap: 16px; margin-bottom: 20px;">
+                <div style="flex:1; background: rgba(75,150,255,0.08); border: 1px solid rgba(75,150,255,0.2); border-radius: 12px; padding: 16px 20px;">
+                    <div style="font-size: 0.8rem; color: #999; text-transform: uppercase; letter-spacing: 1px;">Total Predictions</div>
+                    <div style="font-size: 2rem; font-weight: 700; color: #4b96ff; margin-top: 4px;">{total_preds}</div>
+                </div>
+                <div style="flex:1; background: rgba(75,255,150,0.08); border: 1px solid rgba(75,255,150,0.2); border-radius: 12px; padding: 16px 20px;">
+                    <div style="font-size: 0.8rem; color: #999; text-transform: uppercase; letter-spacing: 1px;">Long Residence</div>
+                    <div style="font-size: 2rem; font-weight: 700; color: #4bff96; margin-top: 4px;">{long_res}</div>
+                </div>
+                <div style="flex:1; background: rgba(255,75,75,0.08); border: 1px solid rgba(255,75,75,0.2); border-radius: 12px; padding: 16px 20px;">
+                    <div style="font-size: 0.8rem; color: #999; text-transform: uppercase; letter-spacing: 1px;">Short Residence</div>
+                    <div style="font-size: 2rem; font-weight: 700; color: #ff4b4b; margin-top: 4px;">{short_res}</div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
             
             display_df = history_df[['compound_name', 'HSP90', 'AXL', 'EGFR', 'best_target', 'category', 'confidence', 'Predicted']]
             display_df.columns = ['Compound', 'HSP90', 'AXL', 'EGFR', 'Best Target', 'Category', 'Confidence', 'Predicted']
             
-            st.dataframe(display_df, hide_index=True)
+            st.dataframe(display_df, hide_index=True, use_container_width=True)
             
             st.download_button(
                 "Download History",
@@ -1534,10 +1583,10 @@ def show_history(conn):
 # BENCHMARK LIBRARY
 # ============================================
 def show_benchmark_library(conn):
-    st.markdown("#### Benchmark Library")
-    st.markdown("Physics based kinetic predictions validated against experimental measurements. "
+    st.markdown("<div style='font-size:1.4rem; font-weight:700; margin-bottom:8px;'>Benchmark Library</div>", unsafe_allow_html=True)
+    st.markdown("<div style='font-size:0.9rem; color:#aaa; margin-bottom:16px;'>Physics based kinetic predictions validated against experimental measurements. "
                 "Data from seekrflow multiscale milestoning simulations (Ojha et al. 2026) "
-                "and published experimental kinetics studies.")
+                "and published experimental kinetics studies.</div>", unsafe_allow_html=True)
     
     if not conn:
         st.warning("Database not connected")
@@ -1546,11 +1595,31 @@ def show_benchmark_library(conn):
     # Get stats
     bench_stats = get_benchmark_stats(conn)
     if bench_stats:
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Total Compounds", bench_stats['total_compounds'] or 0)
-        col2.metric("Targets Covered", bench_stats['total_targets'] or 0)
-        col3.metric("seekrflow Validated", bench_stats['seekrflow_count'] or 0)
-        col4.metric("Literature Reference", bench_stats['experimental_count'] or 0)
+        tc = bench_stats['total_compounds'] or 0
+        tt = bench_stats['total_targets'] or 0
+        sc = bench_stats['seekrflow_count'] or 0
+        ec = bench_stats['experimental_count'] or 0
+        
+        st.markdown(f"""
+        <div style="display: flex; gap: 16px; margin-bottom: 20px;">
+            <div style="flex:1; background: rgba(75,150,255,0.08); border: 1px solid rgba(75,150,255,0.2); border-radius: 12px; padding: 16px 20px;">
+                <div style="font-size: 0.8rem; color: #999; text-transform: uppercase; letter-spacing: 1px;">Total Compounds</div>
+                <div style="font-size: 2rem; font-weight: 700; color: #4b96ff; margin-top: 4px;">{tc}</div>
+            </div>
+            <div style="flex:1; background: rgba(200,150,255,0.08); border: 1px solid rgba(200,150,255,0.2); border-radius: 12px; padding: 16px 20px;">
+                <div style="font-size: 0.8rem; color: #999; text-transform: uppercase; letter-spacing: 1px;">Targets Covered</div>
+                <div style="font-size: 2rem; font-weight: 700; color: #c896ff; margin-top: 4px;">{tt}</div>
+            </div>
+            <div style="flex:1; background: rgba(75,255,150,0.08); border: 1px solid rgba(75,255,150,0.2); border-radius: 12px; padding: 16px 20px;">
+                <div style="font-size: 0.8rem; color: #999; text-transform: uppercase; letter-spacing: 1px;">seekrflow Validated</div>
+                <div style="font-size: 2rem; font-weight: 700; color: #4bff96; margin-top: 4px;">{sc}</div>
+            </div>
+            <div style="flex:1; background: rgba(255,213,75,0.08); border: 1px solid rgba(255,213,75,0.2); border-radius: 12px; padding: 16px 20px;">
+                <div style="font-size: 0.8rem; color: #999; text-transform: uppercase; letter-spacing: 1px;">Literature Reference</div>
+                <div style="font-size: 2rem; font-weight: 700; color: #ffd54b; margin-top: 4px;">{ec}</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
     
     st.markdown("---")
     
@@ -1668,7 +1737,7 @@ def show_benchmark_library(conn):
 # CAMPAIGN LIST VIEW
 # ============================================
 def show_campaign_list(conn, models, desc_names):
-    st.markdown("#### My Campaigns")
+    st.markdown("<div style='font-size:1.4rem; font-weight:700; margin-bottom:16px;'>My Campaigns</div>", unsafe_allow_html=True)
     
     with st.expander("Create New Campaign", expanded=False):
         col1, col2 = st.columns(2)
@@ -1690,36 +1759,43 @@ def show_campaign_list(conn, models, desc_names):
                 else:
                     st.error("Failed to create campaign")
     
-    st.markdown("---")
+    st.markdown("")
     
     if conn:
         campaigns = get_all_campaigns(conn)
         
         if campaigns:
             for campaign in campaigns:
-                with st.container():
-                    col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
-                    
-                    with col1:
-                        st.markdown(f"**{campaign['campaign_name']}**")
-                        st.caption(f"Target: {campaign['target_protein']} | {campaign['compound_count']} compounds | {campaign['prediction_count']} predictions")
-                    
-                    with col2:
-                        status_color = "🟢" if campaign['status'] == 'Active' else "🟡" if campaign['status'] == 'Paused' else "⚫"
-                        st.markdown(f"{status_color} {campaign['status']}")
-                    
-                    with col3:
-                        if st.button("Open", key=f"campaign_open_{campaign['campaign_id']}"):
-                            st.session_state.current_campaign = campaign['campaign_id']
+                status_color = "#4bff96" if campaign['status'] == 'Active' else "#ffd54b" if campaign['status'] == 'Paused' else "#666"
+                compound_count = campaign['compound_count'] or 0
+                prediction_count = campaign['prediction_count'] or 0
+                
+                st.markdown(f"""
+                <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 16px 20px; margin-bottom: 6px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <span style="font-weight: 600; font-size: 1.05rem;">{campaign['campaign_name']}</span>
+                            <span style="margin-left: 10px; font-size: 0.75rem; color: {status_color}; border: 1px solid {status_color}; border-radius: 10px; padding: 2px 10px;">{campaign['status']}</span>
+                        </div>
+                        <div style="font-size: 0.85rem; color: #aaa;">
+                            Target: {campaign['target_protein']} &middot; {compound_count} compounds &middot; {prediction_count} predictions
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                col1, col2, col3 = st.columns([6, 1, 1])
+                with col2:
+                    if st.button("Open", key=f"campaign_open_{campaign['campaign_id']}"):
+                        st.session_state.current_campaign = campaign['campaign_id']
+                        st.rerun()
+                with col3:
+                    if st.button("Delete", key=f"campaign_delete_{campaign['campaign_id']}"):
+                        if delete_campaign(conn, campaign['campaign_id']):
+                            st.success("Campaign deleted!")
                             st.rerun()
-                    
-                    with col4:
-                        if st.button("Delete", key=f"campaign_delete_{campaign['campaign_id']}"):
-                            if delete_campaign(conn, campaign['campaign_id']):
-                                st.success("Campaign deleted!")
-                                st.rerun()
-                    
-                    st.markdown("---")
+                
+                st.markdown("")
         else:
             st.info("No campaigns yet. Create one to get started!")
     else:
