@@ -284,8 +284,14 @@ def get_db_connection():
             port=st.secrets["database"]["port"],
             database=st.secrets["database"]["database"],
             user=st.secrets["database"]["user"],
-            password=st.secrets["database"]["password"]
+            password=st.secrets["database"]["password"],
+            connect_timeout=10,
+            keepalives=1,
+            keepalives_idle=30,
+            keepalives_interval=10,
+            keepalives_count=5
         )
+        conn.autocommit = False
         return conn
     except Exception as e:
         return None
@@ -1015,54 +1021,37 @@ def show_main_app():
     # Load resources
     models = load_models()
     desc_names = load_descriptors()
+    conn = get_db_connection()
     
     # Tabs - now 6 tabs with Benchmark Library added
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📈 Dashboard", "📁 Campaigns", "🔬 Quick Predict", "📊 Batch Upload", "📜 History", "🧪 Benchmark Library"])
     
     # TAB 1: DASHBOARD
     with tab1:
-        conn1 = get_db_connection()
-        show_dashboard(conn1)
-        if conn1:
-            conn1.close()
+        show_dashboard(conn)
     
     # TAB 2: CAMPAIGNS
     with tab2:
-        conn2 = get_db_connection()
         if st.session_state.current_campaign is None:
-            show_campaign_list(conn2, models, desc_names)
+            show_campaign_list(conn, models, desc_names)
         else:
-            show_campaign_detail(conn2, models, desc_names)
-        if conn2:
-            conn2.close()
+            show_campaign_detail(conn, models, desc_names)
     
     # TAB 3: QUICK PREDICT
     with tab3:
-        conn3 = get_db_connection()
-        show_quick_predict(conn3, models, desc_names)
-        if conn3:
-            conn3.close()
+        show_quick_predict(conn, models, desc_names)
     
     # TAB 4: BATCH UPLOAD
     with tab4:
-        conn4 = get_db_connection()
-        show_batch_upload(conn4, models, desc_names)
-        if conn4:
-            conn4.close()
+        show_batch_upload(conn, models, desc_names)
     
     # TAB 5: HISTORY
     with tab5:
-        conn5 = get_db_connection()
-        show_history(conn5)
-        if conn5:
-            conn5.close()
+        show_history(conn)
     
     # TAB 6: BENCHMARK LIBRARY
     with tab6:
-        conn6 = get_db_connection()
-        show_benchmark_library(conn6)
-        if conn6:
-            conn6.close()
+        show_benchmark_library(conn)
     
     # Footer
     st.markdown("---")
@@ -1070,6 +1059,9 @@ def show_main_app():
         "<p style='text-align: center; color: gray;'>KineticScout v2.0 | NovoDyn Therapeutics</p>",
         unsafe_allow_html=True
     )
+    
+    if conn:
+        conn.close()
 
 # ============================================
 # DASHBOARD VIEW
@@ -1759,43 +1751,38 @@ def show_campaign_list(conn, models, desc_names):
                 else:
                     st.error("Failed to create campaign")
     
-    st.markdown("")
+    st.markdown("---")
     
     if conn:
         campaigns = get_all_campaigns(conn)
         
         if campaigns:
             for campaign in campaigns:
-                status_color = "#4bff96" if campaign['status'] == 'Active' else "#ffd54b" if campaign['status'] == 'Paused' else "#666"
-                compound_count = campaign['compound_count'] or 0
-                prediction_count = campaign['prediction_count'] or 0
-                
-                st.markdown(f"""
-                <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 16px 20px; margin-bottom: 6px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div>
-                            <span style="font-weight: 600; font-size: 1.05rem;">{campaign['campaign_name']}</span>
-                            <span style="margin-left: 10px; font-size: 0.75rem; color: {status_color}; border: 1px solid {status_color}; border-radius: 10px; padding: 2px 10px;">{campaign['status']}</span>
-                        </div>
-                        <div style="font-size: 0.85rem; color: #aaa;">
-                            Target: {campaign['target_protein']} &middot; {compound_count} compounds &middot; {prediction_count} predictions
-                        </div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                col1, col2, col3 = st.columns([6, 1, 1])
-                with col2:
-                    if st.button("Open", key=f"campaign_open_{campaign['campaign_id']}"):
-                        st.session_state.current_campaign = campaign['campaign_id']
-                        st.rerun()
-                with col3:
-                    if st.button("Delete", key=f"campaign_delete_{campaign['campaign_id']}"):
-                        if delete_campaign(conn, campaign['campaign_id']):
-                            st.success("Campaign deleted!")
+                with st.container():
+                    col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+                    
+                    with col1:
+                        status_icon = "🟢" if campaign['status'] == 'Active' else "🟡" if campaign['status'] == 'Paused' else "⚫"
+                        compound_count = campaign['compound_count'] or 0
+                        prediction_count = campaign['prediction_count'] or 0
+                        st.markdown(f"**{campaign['campaign_name']}** {status_icon}")
+                        st.caption(f"Target: {campaign['target_protein']}  |  {compound_count} compounds  |  {prediction_count} predictions")
+                    
+                    with col2:
+                        st.markdown(f"**{campaign['status']}**")
+                    
+                    with col3:
+                        if st.button("Open", key=f"campaign_open_{campaign['campaign_id']}"):
+                            st.session_state.current_campaign = campaign['campaign_id']
                             st.rerun()
-                
-                st.markdown("")
+                    
+                    with col4:
+                        if st.button("Delete", key=f"campaign_delete_{campaign['campaign_id']}"):
+                            if delete_campaign(conn, campaign['campaign_id']):
+                                st.success("Campaign deleted!")
+                                st.rerun()
+                    
+                    st.markdown("---")
         else:
             st.info("No campaigns yet. Create one to get started!")
     else:
