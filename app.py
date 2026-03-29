@@ -291,7 +291,6 @@ def get_db_connection():
             keepalives_interval=10,
             keepalives_count=5
         )
-        conn.autocommit = False
         return conn
     except Exception as e:
         return None
@@ -302,6 +301,7 @@ def get_db_connection():
 def get_dashboard_stats(conn):
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     try:
+        conn.rollback()
         cursor.execute("""
             SELECT 
                 (SELECT COUNT(*) FROM campaigns) as total_campaigns,
@@ -428,6 +428,7 @@ def get_benchmark_targets(conn):
 def get_benchmark_stats(conn):
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     try:
+        conn.rollback()
         cursor.execute("""
             SELECT 
                 COUNT(*) as total_compounds,
@@ -499,6 +500,7 @@ def add_compound_to_campaign(conn, campaign_id, compound_id, pipeline_stage='Pre
 def get_prediction_history(conn, limit=50):
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     try:
+        conn.rollback()
         cursor.execute("""
             SELECT c.compound_name, c.smiles, p.hsp90_tau_seconds, p.axl_tau_seconds, 
                    p.egfr_tau_seconds, p.best_target, p.category, p.confidence, p.predicted_at
@@ -553,18 +555,18 @@ def create_campaign(conn, campaign_name, target_protein, description, status='Ac
 def get_all_campaigns(conn):
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     try:
+        conn.rollback()
         cursor.execute("""
-            SELECT c.*, 
-                   COUNT(DISTINCT cc.compound_id) as compound_count,
-                   COUNT(DISTINCT p.prediction_id) as prediction_count
+            SELECT c.*,
+                   (SELECT COUNT(*) FROM campaign_compounds cc WHERE cc.campaign_id = c.campaign_id) as compound_count,
+                   (SELECT COUNT(*) FROM predictions p WHERE p.campaign_id = c.campaign_id) as prediction_count
             FROM campaigns c
-            LEFT JOIN campaign_compounds cc ON c.campaign_id = cc.campaign_id
-            LEFT JOIN predictions p ON c.campaign_id = p.campaign_id
-            GROUP BY c.campaign_id
             ORDER BY c.created_at DESC
         """)
         return cursor.fetchall()
     except Exception as e:
+        conn.rollback()
+        st.error(f"Error loading campaigns: {str(e)}")
         return []
     finally:
         cursor.close()
